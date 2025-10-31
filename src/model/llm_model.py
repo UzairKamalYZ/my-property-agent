@@ -1,14 +1,14 @@
 import ollama
 from src.config import Config
 
-class QwenModel:
-    """Wrapper for local Qwen model using Ollama."""
+class LlmModel:
+    """Wrapper for local language model using Ollama."""
 
-    def __init__(self, model_name=Config.QWEN_MODEL_NAME):
+    def __init__(self, model_name=Config.LLM_MODEL_NAME):
         self.model = model_name
 
     def chat(self, messages, stream=False):
-        """Send messages to the Qwen model."""
+        """Send messages to the language model."""
         try:
             response = ollama.chat(
                 model=self.model,

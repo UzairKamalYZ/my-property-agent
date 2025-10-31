@@ -8,6 +8,8 @@ My Property Agent is a conversational AI agent designed to answer your questions
 *   **Conversation Memory:** The agent remembers the context of your conversation, allowing for follow-up questions.
 *   **Streaming Responses:** Get responses from the agent as they are generated, providing a more interactive experience.
 *   **Configurable:** The agent's model and memory settings can be easily configured through a `.env` file.
+*   **Web Scraping:** The agent can scrape content from a list of URLs to provide more context for its answers.
+*   **RESTful API:** The agent can be exposed as a RESTful service.
 
 ## Getting Started
 
@@ -37,7 +39,7 @@ My Property Agent is a conversational AI agent designed to answer your questions
 
 ### Configuration
 
-1.  Create a `.env` file in the root of the project:
+1.  Create a `.env` file in the root of the project by copying the example file:
     ```bash
     cp .env.example .env
     ```
@@ -45,20 +47,41 @@ My Property Agent is a conversational AI agent designed to answer your questions
 2.  Modify the `.env` file to set your desired configuration:
     *   `QWEN_MODEL_NAME`: The name of the Ollama model to use (e.g., `qwen3:1.7b`).
     *   `MEMORY_FILE`: The name of the file to use for conversation memory (e.g., `memory.json`).
+    *   `URLS_FILE`: The name of the file containing URLs to scrape (e.g., `urls.txt`).
 
-### Running the Agent
+## Running the Agent as a Standalone Script
 
-To start the agent, run the following command:
+To start the agent as a standalone script, run the following command:
 
 ```bash
-python -m src.agent
+PYTHONPATH=. python3 src/agent.py
 ```
 
-## Usage
+## Running the RESTful Service
 
-Once the agent is running, you can start a conversation by typing your questions into the console.
+To run the agent as a RESTful service, use the following command:
 
-To exit the agent, type `exit` or `quit`.
+```bash
+PYTHONPATH=. uvicorn src.main:app --reload
+```
+
+The service will be available at `http://127.0.0.1:8000`.
+
+### API Usage
+
+You can interact with the service using `curl` or any other API client.
+
+**Example `curl` command:**
+
+```bash
+curl -X POST -H "Content-Type: application/json" -d '{"prompt": "Hello"}' http://127.0.0.1:8000/ask
+```
+
+**Streaming Example:**
+
+```bash
+curl -X POST -H "Content-Type: application/json" -d '{"prompt": "Hello", "stream": true}' http://127.0.0.1:8000/ask
+```
 
 ## Testing
 
@@ -71,20 +94,31 @@ pytest
 ## Project Structure
 
 ```
-.my-property-agent/
-├── src/
+.
+├── README.md
+├── requirements.txt
+├── scraped_content.json
+├── src
+│   ├── agent.py
+│   ├── config.py
 │   ├── __init__.py
-│   ├── agent.py          # Main agent logic
-│   ├── config.py         # Configuration management
-│   └── model/
-│       └── qwen_model.py # Qwen model wrapper
-├── tests/
+│   ├── main.py
+│   ├── memory_manager.py
+│   ├── model
+│   │   ├── __init__.py
+│   │   └── llm_model.py
+│   └── scraping
+│       ├── __init__.py
+│       ├── url_processor.py
+│       └── web_scraper.py
+├── tests
+│   ├── __init__.py
 │   ├── test_agent.py
 │   ├── test_config.py
-│   └── test_qwen_model.py
-├── .env                  # Environment variables
-├── requirements.txt      # Project dependencies
-└── README.md             # This file
+│   ├── test_llm_model.py
+│   ├── test_memory_manager.py
+│   └── test_web_scraper.py
+└── urls.txt
 ```
 
 ## Contributing

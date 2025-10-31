@@ -1,14 +1,18 @@
-from src.model.qwen_model import QwenModel
+from src.model.llm_model import LlmModel
 from src.config import Config
 from src.memory_manager import MemoryManager
+from src.scraping.web_scraper import WebScraper
+from src.scraping.url_processor import UrlProcessor
 import os,json
+import re
 
-class LocalQwenAgent:
-    """Agent that uses the Qwen model and keeps conversation memory."""
+class LocalAgent:
+    """Agent that uses a local language model and keeps conversation memory."""
 
     def __init__(self, memory_file=Config.MEMORY_FILE):
-        self.model = QwenModel()
+        self.model = LlmModel()
         self.memory_manager = MemoryManager(memory_file)
+        self.web_scraper = WebScraper()
         self.memory = self.memory_manager.load_memory()
 
     def ask(self, prompt: str, stream=False):
@@ -41,9 +45,12 @@ class LocalQwenAgent:
         """Close the agent and release resources."""
         self.model.close()
 
+
 if __name__ == "__main__":
-    print("🤖 Qwen Agent (modular) is ready!")
-    with LocalQwenAgent() as agent:
+    print("🤖 Local Agent is ready!")
+    with LocalAgent() as agent:
+        url_processor = UrlProcessor(agent.web_scraper, agent.memory)
+        url_processor.process_urls_from_file(Config.URLS_FILE)
         try:
             while True:
                 q = input("You: ")
