@@ -8,7 +8,7 @@ class WebScraper:
         """Fetch and parse the text content of a URL."""
         try:
             response = requests.get(url)
-            print(f"url----> {url}")
+            print(f"scraping----> {url}")
             response.raise_for_status()  # Raise an exception for bad status codes
             soup = BeautifulSoup(response.content, 'html.parser')
             return soup.get_text(separator='\n', strip=True)

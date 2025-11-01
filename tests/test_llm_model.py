@@ -10,34 +10,22 @@ def llm_model():
     return LlmModel()
 
 def test_llm_model_chat_no_stream(llm_model):
-    with patch('ollama.chat') as mock_chat:
-        mock_chat.return_value = {"message": {"content": "Hello there!"}}
-        response = llm_model.chat([{"role": "user", "content": "Hello"}])
+    with patch('langchain_core.runnables.history.RunnableWithMessageHistory.invoke') as mock_invoke:
+        mock_invoke.return_value = "Hello there!"
+        response = llm_model.chat("Hello", "test_session")
         assert response == "Hello there!"
-        mock_chat.assert_called_once_with(
-            model=llm_model.model,
-            messages=[{"role": "user", "content": "Hello"}],
-            stream=False
-        )
+        mock_invoke.assert_called_once()
 
 def test_llm_model_chat_stream(llm_model):
-    with patch('ollama.chat') as mock_chat:
-        mock_response = [
-            {"message": {"content": "Hello"}},
-            {"message": {"content": " there!"}}
-        ]
-        mock_chat.return_value = iter(mock_response)
-        response_generator = llm_model.chat([{"role": "user", "content": "Hello"}], stream=True)
+    with patch('langchain_core.runnables.history.RunnableWithMessageHistory.stream') as mock_stream:
+        mock_stream.return_value = iter(["Hello", " there!"])
+        response_generator = llm_model.chat("Hello", "test_session", stream=True)
         response = "".join(response_generator)
         assert response == "Hello there!"
-        mock_chat.assert_called_once_with(
-            model=llm_model.model,
-            messages=[{"role": "user", "content": "Hello"}],
-            stream=True
-        )
+        mock_stream.assert_called_once()
 
 def test_llm_model_chat_error(llm_model):
-    with patch('ollama.chat') as mock_chat:
-        mock_chat.side_effect = Exception("Test error")
-        response = llm_model.chat([{"role": "user", "content": "Hello"}])
-        assert response == ""
+    with patch('langchain_core.runnables.history.RunnableWithMessageHistory.invoke') as mock_invoke:
+        mock_invoke.side_effect = Exception("Test error")
+        with pytest.raises(Exception):
+            llm_model.chat("Hello", "test_session")

@@ -7,7 +7,7 @@ My Property Agent is a conversational AI agent designed to answer your questions
 *   **Conversational Interface:** Interact with the agent in a natural, conversational way.
 *   **Conversation Memory:** The agent remembers the context of your conversation, allowing for follow-up questions.
 *   **Streaming Responses:** Get responses from the agent as they are generated, providing a more interactive experience.
-*   **Configurable:** The agent's model and memory settings can be easily configured through a `.env` file.
+*   **Configurable:** The agent's model can be easily configured through a `.env` file.
 *   **Web Scraping:** The agent can scrape content from a list of URLs to provide more context for its answers.
 *   **RESTful API:** The agent can be exposed as a RESTful service.
 
@@ -46,7 +46,7 @@ My Property Agent is a conversational AI agent designed to answer your questions
 
 2.  Modify the `.env` file to set your desired configuration:
     *   `QWEN_MODEL_NAME`: The name of the Ollama model to use (e.g., `qwen3:1.7b`).
-    *   `MEMORY_FILE`: The name of the file to use for conversation memory (e.g., `memory.json`).
+    *   `MEMORY_FILE`: The name of the file to use for conversation history (e.g., `memory.json`).
     *   `URLS_FILE`: The name of the file containing URLs to scrape (e.g., `urls.txt`).
 
 ## Running the Agent as a Standalone Script
@@ -97,18 +97,14 @@ pytest
 .
 ├── README.md
 ├── requirements.txt
-├── scraped_content.json
 ├── src
 │   ├── agent.py
 │   ├── config.py
 │   ├── __init__.py
 │   ├── main.py
-│   ├── memory_manager.py
 │   ├── model
-│   │   ├── __init__.py
 │   │   └── llm_model.py
 │   └── scraping
-│       ├── __init__.py
 │       ├── url_processor.py
 │       └── web_scraper.py
 ├── tests
@@ -116,7 +112,6 @@ pytest
 │   ├── test_agent.py
 │   ├── test_config.py
 │   ├── test_llm_model.py
-│   ├── test_memory_manager.py
 │   └── test_web_scraper.py
 └── urls.txt
 ```

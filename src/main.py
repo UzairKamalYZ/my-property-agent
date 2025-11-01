@@ -14,7 +14,7 @@ class AskRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    url_processor = UrlProcessor(agent.web_scraper, agent.memory)
+    url_processor = UrlProcessor(agent.web_scraper, agent.model.get_session_history(agent.session_id))
     url_processor.process_urls_from_file(Config.URLS_FILE)
 
 @app.on_event("shutdown")
