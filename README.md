@@ -54,6 +54,7 @@ My Property Agent is a conversational AI agent designed to answer your questions
 To start the agent as a standalone script, run the following command:
 
 ```bash
+cd agentP
 PYTHONPATH=. python3 src/agent.py
 ```
 
