@@ -74,7 +74,7 @@ You can interact with the service using `curl` or any other API client.
 **Example `curl` command:**
 
 ```bash
-curl -X POST -H "Content-Type: application/json" -d '{"prompt": "Hello"}' http://127.0.0.1:8000/ask
+curl "http://127.0.0.1:8000/ask?prompt=Hello"
 ```
 
 **Streaming Example:**
