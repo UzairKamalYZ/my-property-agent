@@ -34,15 +34,13 @@ My Property Agent is a conversational AI agent designed to answer your questions
 
 3.  Install the dependencies:
     ```bash
-    pip install -r requirements.txt
+    cd agentP
+pip install -r requirements.txt
     ```
 
 ### Configuration
 
-1.  Create a `.env` file in the root of the project by copying the example file:
-    ```bash
-    cp .env.example .env
-    ```
+1.  Create a `.env` file in the `agentP` directory.
 
 2.  Modify the `.env` file to set your desired configuration:
     *   `QWEN_MODEL_NAME`: The name of the Ollama model to use (e.g., `qwen3:1.7b`).
@@ -82,7 +80,7 @@ curl "http://127.0.0.1:8000/ask?prompt=Hello"
 **Streaming Example:**
 
 ```bash
-curl -X POST -H "Content-Type: application/json" -d '{"prompt": "Hello", "stream": true}' http://127.0.0.1:8000/ask
+curl "http://127.0.0.1:8000/ask?prompt=Hello&stream=True"
 ```
 
 ## Frontend (Chatty)
@@ -100,6 +98,7 @@ npm run dev
 To run the tests, use pytest:
 
 ```bash
+cd agentP
 pytest
 ```
 
@@ -108,8 +107,9 @@ pytest
 ```
 .
 ├── README.md
-├── requirements.txt
 ├── agentP
+│   ├── requirements.txt
+│   ├── urls.txt
 │   ├── src
 │   │   ├── agent.py
 │   │   ├── config.py
@@ -138,7 +138,6 @@ pytest
 │   ├── tsconfig.json
 │   ├── tsconfig.node.json
 │   └── vite.config.ts
-└── urls.txt
 ```
 
 ## Contributing
