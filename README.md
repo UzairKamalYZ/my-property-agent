@@ -55,6 +55,7 @@ To start the agent as a standalone script, run the following command:
 
 ```bash
 cd agentP
+cd agentP
 PYTHONPATH=. python3 src/agent.py
 ```
 
@@ -63,6 +64,7 @@ PYTHONPATH=. python3 src/agent.py
 To run the agent as a RESTful service, use the following command:
 
 ```bash
+cd agentP
 PYTHONPATH=. uvicorn src.main:app --reload
 ```
 
@@ -84,6 +86,16 @@ curl "http://127.0.0.1:8000/ask?prompt=Hello"
 curl -X POST -H "Content-Type: application/json" -d '{"prompt": "Hello", "stream": true}' http://127.0.0.1:8000/ask
 ```
 
+## Frontend (Chatty)
+
+To run the frontend application, use the following commands:
+
+```bash
+cd chatty
+npm install
+npm run dev
+```
+
 ## Testing
 
 To run the tests, use pytest:
@@ -98,22 +110,35 @@ pytest
 .
 ├── README.md
 ├── requirements.txt
-├── src
-│   ├── agent.py
-│   ├── config.py
-│   ├── __init__.py
-│   ├── main.py
-│   ├── model
-│   │   └── llm_model.py
-│   └── scraping
-│       ├── url_processor.py
-│       └── web_scraper.py
-├── tests
-│   ├── __init__.py
-│   ├── test_agent.py
-│   ├── test_config.py
-│   ├── test_llm_model.py
-│   └── test_web_scraper.py
+├── agentP
+│   ├── src
+│   │   ├── agent.py
+│   │   ├── config.py
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── model
+│   │   │   └── llm_model.py
+│   │   └── scraping
+│   │       ├── url_processor.py
+│   │       └── web_scraper.py
+│   └── tests
+│       ├── __init__.py
+│       ├── test_agent.py
+│       ├── test_config.py
+│       ├── test_llm_model.py
+│       └── test_web_scraper.py
+├── chatty
+│   ├── public
+│   ├── src
+│   │   ├── App.css
+│   │   ├── App.tsx
+│   │   ├── index.css
+│   │   └── main.tsx
+│   ├── index.html
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── tsconfig.node.json
+│   └── vite.config.ts
 └── urls.txt
 ```
 
