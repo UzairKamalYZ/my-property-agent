@@ -55,7 +55,6 @@ To start the agent as a standalone script, run the following command:
 
 ```bash
 cd agentP
-cd agentP
 PYTHONPATH=. python3 src/agent.py
 ```
 
