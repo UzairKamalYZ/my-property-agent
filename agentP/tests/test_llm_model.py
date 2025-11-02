@@ -29,3 +29,8 @@ def test_llm_model_chat_error(llm_model):
         mock_invoke.side_effect = Exception("Test error")
         with pytest.raises(Exception):
             llm_model.chat("Hello", "test_session")
+
+def test_get_session_history_multiple_times(llm_model):
+    history1 = llm_model.get_session_history("test_session")
+    history2 = llm_model.get_session_history("test_session")
+    assert history1 is history2

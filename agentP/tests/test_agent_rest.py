@@ -3,11 +3,11 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import pytest
 from fastapi.testclient import TestClient
-from src.agentRest import app
+from src.agentRest import app, lifespan
 from unittest.mock import patch, MagicMock
 from contextlib import asynccontextmanager
 
-# Prevent the lifespan from running during tests
+# Prevent the lifespan from running during most tests
 @asynccontextmanager
 async def mock_lifespan(app):
     yield
@@ -36,3 +36,13 @@ def test_ask_stream(client):
     response = client.get("/ask?prompt=Test%20prompt&stream=True")
     assert response.status_code == 200
     assert response.text == "data: Test \n\ndata: response\n\n"
+
+def test_lifespan():
+    with patch('src.agentRest.LocalAgent') as mock_agent:
+        with patch('src.scraping.url_processor.UrlProcessor.process_urls_from_file') as mock_process_urls:
+            app.router.lifespan_context = lifespan
+            with TestClient(app) as test_client:
+                pass
+            mock_agent.assert_called_once()
+            mock_process_urls.assert_called_once()
+            mock_agent.return_value.close.assert_called_once()
