@@ -55,7 +55,7 @@ To start the agent as a standalone script, run the following command:
 
 ```bash
 cd agentP
-PYTHONPATH=. python3 src/agent.py
+PYTHONPATH=.. python3 src/agent.py
 ```
 
 ## Running the RESTful Service
@@ -64,7 +64,7 @@ To run the agent as a RESTful service, use the following command:
 
 ```bash
 cd agentP
-PYTHONPATH=. uvicorn src.main:app --reload
+PYTHONPATH=.. uvicorn src.main:app --reload
 ```
 
 The service will be available at `http://127.0.0.1:8000`.
