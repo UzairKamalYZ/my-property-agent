@@ -1,22 +1,48 @@
+import json
+from httpx import stream
 from langchain_ollama import OllamaLLM as Ollama
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from src.config import Config
+from config import Config
+import time
 
 class LlmModel:
     """Wrapper for local language model using Langchain and Ollama."""
 
     def __init__(self, model_name=Config.LLM_MODEL_NAME):
-        self.llm = Ollama(model=model_name)
-        self.prompt = ChatPromptTemplate.from_messages(
+        self.llm = Ollama(model=model_name, seed=365, temperature=0)
+
+
+        prompt = """
+You are a professional property agent.
+Your task is to suggest apartments or houses based on the user's request.
+⚠️ Output rules (MUST follow):
+- Start with: "Here are <number> results:"
+- Number them 1 to <number>
+- Each result MUST contain:
+  - Property type (Apartment or House)
+  - Location (city)
+  - Monthly rent in EUR
+  - Short description (1 sentence)
+Format EXACTLY like this:
+Here are  results:
+1. Apartment in <City> – Rent €<amount> – <short description> <link to website>
+2. House in <City> – Rent €<amount> – <short description> <link to website>
+3. Apartment in <City> – Rent €<amount> – <short description> <link to website>
+Do not add any extra text.
+"""
+
+        self.chat_template = ChatPromptTemplate.from_messages(
             [
-                ("system", "You are a helpful assistant."),
+                ("system",
+                 prompt 
+                 ),
                 MessagesPlaceholder(variable_name="history"),
                 ("human", "{input}"),
             ]
         )
-        self.chain = self.prompt | self.llm
+        self.chain = self.chat_template | self.llm
         self.store = {}
 
     def get_session_history(self, session_id: str) -> InMemoryChatMessageHistory:
@@ -24,8 +50,8 @@ class LlmModel:
             self.store[session_id] = InMemoryChatMessageHistory()
         return self.store[session_id]
 
-    def chat(self, prompt: str, session_id: str, stream=False):
-        """Send a prompt to the language model."""
+    def chat(self, prompt: str, session_id: str, listings: list[dict], stream=False):
+        """Send a prompt to the language model."""  
         runnable_with_history = RunnableWithMessageHistory(
             self.chain,
             self.get_session_history,
@@ -33,10 +59,19 @@ class LlmModel:
             history_messages_key="history",
         )
         config = {"configurable": {"session_id": session_id}}
+        start = time.perf_counter()
+        payload = {
+                "input": prompt,
+                "listings": json.dumps(listings, indent=2),
+                }
+
         if stream:
-            return runnable_with_history.stream({"input": prompt}, config=config)
+            return runnable_with_history.stream(payload, config=config)
         else:
-            return runnable_with_history.invoke({"input": prompt}, config=config)
+           return runnable_with_history.invoke(payload, config=config)
+        
+        end = time.perf_counter()
+        print(f"Time taken: {end - start:.4f} seconds")
 
     def close(self):
         """Close the model and release resources."""

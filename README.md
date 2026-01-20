@@ -1,6 +1,6 @@
 # My Property Agent
 
-My Property Agent is a conversational AI agent designed to answer your questions about properties. It uses a local large language model (LLM) through Ollama to understand and respond to your queries.
+My Property Agent is a conversational AI agent designed to answer your questions about properties. It uses a local large language model (LLM) via Ollama to understand and respond to your queries.
 
 ## Features
 
@@ -62,7 +62,7 @@ To run the agent as a RESTful service, use the following command:
 
 ```bash
 cd agentP
-PYTHONPATH=.. uvicorn src.main:app --reload
+PYTHONPATH=.. uvicorn src.agentRest:app --reload
 ```
 
 The service will be available at `http://127.0.0.1:8000`.
