@@ -34,15 +34,7 @@ class UrlProcessor:
         return listings
     
     def extract_listings(self, content: str, source_url: str) -> list[dict]:
-        """
-        Extract property listings from scraped text content.
-
-        This is a generic extractor designed to work reasonably
-        across multiple real-estate websites.
-        """
-
         listings = []
-
         # Split content into candidate blocks
         blocks = re.split(r"\n\s*\n", content)
 
