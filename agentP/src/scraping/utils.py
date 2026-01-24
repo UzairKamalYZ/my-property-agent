@@ -1,7 +1,7 @@
 from langchain_core.documents import Document
 
 
-def listings_to_documents(listings: list[dict]) -> list[Document]:
+def listings_to_documents(listings: dict) -> list[Document]:
     """
     Convert property listings into LangChain Documents
     suitable for vector embedding and similarity search.

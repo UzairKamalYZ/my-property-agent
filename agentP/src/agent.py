@@ -1,7 +1,7 @@
 import uuid
 
 from model.llm_model import LlmModel
-from scraping.embedder import Embedder
+from agentP.src.model.embedder import Embedder
 from scraping.url_processor import UrlProcessor
 from scraping.web_scraper import WebScraper
 

@@ -1,7 +1,6 @@
 import uuid
 
-
-from scraping.embedder import Embedder
+from model.embedder import Embedder
 from scraping.url_processor import UrlProcessor
 from scraping.web_scraper import WebScraper
 import config
@@ -15,13 +14,14 @@ class DataCollector:
         self.url_processor = UrlProcessor(self.web_scraper)
 
     def getDataFromUrls(self, file_path: str) -> list[dict]:
-        return self.url_processor.process_urls_from_file("../urls.txt")
+        return self.url_processor.process_urls_from_file(file_path)
 
     def getVectorEmbbedings(self,listings: dict) :
         embed = self.embedder.embed(listings)
         return embed
-    def getRankedListings(self,listings: dict) :
-        rank_listings = self.embedder.rank_listings("Apartments or House in Belgium under 1500 EUR", k=5)
+    def getRankedListings(self) :
+        rank_listings = self.embedder.rank_listings(
+            "Apartments or House in Belgium under 1500 EUR", k=5)
         return rank_listings
 
     def __enter__(self):
@@ -41,9 +41,9 @@ if __name__ == "__main__":
         cf = config.Config()
 
         data_from_urls = collector.getDataFromUrls(cf.URLS_FILE)
-        embbedings = collector.getVectorEmbbedings(data_from_urls)
+        embeddings = collector.getVectorEmbbedings(data_from_urls)
 
-        top_listings = collector.getRankedListings(embbedings)
+        top_listings = collector.getRankedListings()
         for i, listing in enumerate(top_listings, 1):
             print(f"{i}. {listing}")
 

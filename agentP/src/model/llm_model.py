@@ -1,10 +1,9 @@
 import json
-from httpx import stream
 from langchain_ollama import OllamaLLM as Ollama
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from config import Config
+from agentP.src.config import Config
 import time
 
 class LlmModel:
@@ -14,24 +13,7 @@ class LlmModel:
         self.llm = Ollama(model=model_name, seed=365, temperature=0)
 
 
-        prompt = """
-You are a professional property agent.
-Your task is to suggest apartments or houses based on the user's request.
-⚠️ Output rules (MUST follow):
-- Start with: "Here are <number> results:"
-- Number them 1 to <number>
-- Each result MUST contain:
-  - Property type (Apartment or House)
-  - Location (city)
-  - Monthly rent in EUR
-  - Short description (1 sentence)
-Format EXACTLY like this:
-Here are  results:
-1. Apartment in <City> – Rent €<amount> – <short description> <link to website>
-2. House in <City> – Rent €<amount> – <short description> <link to website>
-3. Apartment in <City> – Rent €<amount> – <short description> <link to website>
-Do not add any extra text.
-"""
+        prompt = Config.PROMPT
 
         self.chat_template = ChatPromptTemplate.from_messages(
             [
