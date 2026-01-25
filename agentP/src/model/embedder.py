@@ -13,6 +13,7 @@ class Embedder:
         self.store = None
         self.documents = []
 
+
     def embed(self, listings: dict):
         """Convert listings into vectors."""
         self.documents = listings_to_documents(listings)
@@ -24,22 +25,15 @@ class Embedder:
         # Create vectors
         vectors = np.array([self.model.encode(doc.page_content) for doc in self.documents], dtype='float32')
 
+        self.__getStore__().add(vectors, metadata)
+
+    def __getStore__(self,dim=384):
         self.store = create_vector_store(
             store_type=Config.STORE_TYPE,
-            dim=vectors.shape[1],
+            dim=dim,
             config={}
         )
-
-        self.store.add(vectors, metadata)
-
-    def rank_listings(self, query: str, k: int = 5):
-        """Return top-k listings by semantic similarity."""
-        if self.store is None:
-            raise ValueError("Index not built yet. Call embed() first.")
-
-        query_vec = self.embed_query(query)
-        top_docs = self.store.search(query_vec, k)
-        return top_docs
+        return self.store
 
     def embed_texts(self, texts: list[str]) -> np.ndarray:
         vectors = self.model.encode(texts)

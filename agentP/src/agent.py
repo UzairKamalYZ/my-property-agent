@@ -1,10 +1,7 @@
 import uuid
 
 from model.llm_model import LlmModel
-from agentP.src.model.embedder import Embedder
-from scraping.url_processor import UrlProcessor
 from scraping.web_scraper import WebScraper
-
 
 class LocalAgent:
     """Agent that uses a local language model and keeps conversation memory."""
@@ -12,12 +9,11 @@ class LocalAgent:
     def __init__(self):
         self.model = LlmModel()
         self.web_scraper = WebScraper()
-        self.embedder = Embedder()
         self.session_id = str(uuid.uuid4())
 
-    def ask(self, prompt: str, listings: list[dict], stream=False):
+    def ask(self, prompt: str, stream=False):
         """Send prompt to model and remember conversation."""
-        return self.model.chat(prompt, self.session_id, listings, stream=stream)
+        return self.model.chat(prompt, self.session_id, stream=stream)
 
     def __enter__(self):
         return self
@@ -33,23 +29,15 @@ class LocalAgent:
 if __name__ == "__main__":
     print("🤖 Local Agent is ready!")
     with LocalAgent() as agent:
-
-        url_processor = UrlProcessor(agent.web_scraper)
-        listings = url_processor.process_urls_from_file("../urls.txt")
-        print(f"Total listings scraped: {len(listings)}")
-        vectorstore = agent.embedder.embed(listings)
-        top_listings = agent.embedder.rank_listings("Apartments or House in Belgium under 1500 EUR", k=5)
-        print("Top listings based on embedding search:")
-        for i, listing in enumerate(top_listings, 1):
-            print(f"{i}. {listing}")
-
         try:
             while True:
                 q = input("You: ")
                 if q.lower() in ["exit", "quit"]:
                     break
+
+
                 print("AI:", end="", flush=True)
-                for chunk in agent.ask(q, listings, stream=True):
+                for chunk in agent.ask(q, stream=True):
                     print(chunk, end="", flush=True)
                 print()
         except KeyboardInterrupt:
