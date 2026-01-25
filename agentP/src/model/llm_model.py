@@ -86,10 +86,6 @@ class LlmModel:
     # -------------------------------
 
     def chat(self, user_prompt: str, session_id: str, stream: bool = False):
-        """
-        Main RAG chat entry point.
-        Retrieval, context building, and LLM invocation happen here.
-        """
 
         runnable = RunnableWithMessageHistory(
             self.chain,
@@ -103,15 +99,10 @@ class LlmModel:
         # 1. Retrieve relevant listings
         listings = self.retrieve(user_prompt, k=5)
 
-        # Optional debug logging
-        print("Top listings based on embedding search:")
-        for i, listing in enumerate(listings, 1):
-            print(f"{i}. {listing}")
-
         # 2. Build LLM-ready context
         context = self._build_context(listings)
 
-        # 3. Merge context into input (CRITICAL FIX)
+        # 3. Merge context into input
         full_input = f"""
                         User question:
                         {user_prompt}
