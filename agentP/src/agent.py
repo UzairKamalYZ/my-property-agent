@@ -40,11 +40,11 @@ if __name__ == "__main__":
     with LocalAgent() as agent:
         try:
             while True:
-                q = input("You: ")
+                q = input("What would you like to ask?: ")
                 if q.lower() in ["exit", "quit"]:
                     break
 
-                print("AI:", end="", flush=True)
+                print("AI is thinking..... ", end="", flush=True)
                 for chunk in agent.ask(q, stream=True):
                     print(chunk, end="", flush=True)
                 print()
