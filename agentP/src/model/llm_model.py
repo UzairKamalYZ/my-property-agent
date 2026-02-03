@@ -2,17 +2,17 @@ import time
 from langchain_ollama import OllamaLLM as Ollama
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.chat_history import InMemoryChatMessageHistory
 
 from agentP.src.config import Config
-from agentP.src.model.embedder import Embedder
+from agentP.src.model.rag_context_manager import RagContextManager
+from agentP.src.model.session_manager import SessionManager
 
 
 class LlmModel:
 
     def __init__(self, model_name=Config.LLM_MODEL_NAME):
-        self.store = {}
-        self.embedder = Embedder()
+        self.session_manager = SessionManager()
+        self.rag_context_manager = RagContextManager()
 
         self.llm = Ollama(
             model=model_name,
@@ -20,12 +20,18 @@ class LlmModel:
             temperature=0
         )
 
-        self.chat_template = self.get_chat_template()
+        chat_template = self._get_chat_template()
+        chain = chat_template | self.llm
 
-        self.chain = self.chat_template | self.llm
+        self.runnable_with_history = RunnableWithMessageHistory(
+            chain,
+            self.session_manager.get_session_history,
+            input_messages_key="input",
+            history_messages_key="history",
+        )
 
-
-    def get_chat_template(self) -> ChatPromptTemplate:
+    @staticmethod
+    def _get_chat_template() -> ChatPromptTemplate:
         return ChatPromptTemplate.from_messages(
             [
                 (
@@ -40,102 +46,33 @@ class LlmModel:
             ]
         )
 
-
-
-    # -------------------------------
-    # Context Builder
-    # -------------------------------
-
-    def _build_context(self, listings):
-        if not listings:
-            return "No listings found."
-
-        def safe(v, suffix=""):
-            if v is None or str(v) == "nan" or v == "":
-                return "N/A"
-            return f"{v}{suffix}"
-
-        blocks = []
-
-        for i, l in enumerate(listings, start=1):
-            blocks.append(
-                f"""
-    Listing {i}
-    Location: {safe(l.get("city"))}
-    Price: {safe(l.get("price"), " PLN")}
-    Rooms: {safe(l.get("rooms"))}
-    Surface: {safe(l.get("squareMeters"), " m²")}
-    Floor: {safe(l.get("floor"))} / {safe(l.get("floorCount"))}
-    Type: {safe(l.get("type"))}
-    Ownership: {safe(l.get("ownership"))}
-    Building material: {safe(l.get("buildingMaterial"))}
-    Condition: {safe(l.get("condition"))}
-    Amenities: {', '.join([a for a in [
-                        "Parking" if l.get("hasParkingSpace") else None,
-                        "Balcony" if l.get("hasBalcony") else None,
-                        "Elevator" if l.get("hasElevator") else None,
-                        "Security" if l.get("hasSecurity") else None,
-                        "Storage" if l.get("hasStorageRoom") else None,
-                    ] if a
-                ]) or "None"}
-    Description:
-    {safe(l.get("text"))}
-    """.strip()
-            )
-
-        return "\n\n".join(blocks)
+    def _invoke_runnable(self, payload: dict, config: dict, stream: bool = False):
+        if stream:
+            return self.runnable_with_history.stream(payload, config=config)
+        else:
+            return self.runnable_with_history.invoke(payload, config=config)
 
     # -------------------------------
-    # Session Memory
+    # Chat Entry Point (Direct)
     # -------------------------------
-
-    def get_session_history(self, session_id: str) -> InMemoryChatMessageHistory:
-        if session_id not in self.store:
-            self.store[session_id] = InMemoryChatMessageHistory()
-        return self.store[session_id]
+    def ask(self, user_prompt: str, session_id: str, stream: bool = False):
+        payload = {"input": user_prompt}
+        config = {"configurable": {"session_id": session_id}}
+        return self._invoke_runnable(payload, config, stream)
 
     # -------------------------------
     # Chat Entry Point (RAG)
     # -------------------------------
-
     def chat_with_context(self, user_prompt: str, session_id: str, stream: bool = False):
-
-        runnable = RunnableWithMessageHistory(
-            self.chain,
-            self.get_session_history,
-            input_messages_key="input",
-            history_messages_key="history",
-        )
-
         start = time.perf_counter()
 
-        # 1. Retrieve relevant listings
-        listings = self.embedder.search(user_prompt, k=5)
+        # 1. Prepare RAG prompt
+        full_input = self.rag_context_manager.prepare_rag_prompt(user_prompt)
 
-        # 2. Build LLM-ready context
-        context = self._build_context(listings)
-
-        # 3. Merge context into input
-        full_input = f"""
-                        User question:
-                        {user_prompt}
-                        
-                        Available listings:
-                        {context}
-                        
-                        Answer strictly using the listings above.
-                        If no listings match, say "No matching listings found".
-                    """
-
+        # 2. Invoke LLM
         payload = {"input": full_input}
-
         config = {"configurable": {"session_id": session_id}}
-
-        # 4. Invoke LLM
-        if stream:
-            return runnable.stream(payload, config=config)
-        else:
-            response = runnable.invoke(payload, config=config)
+        response = self._invoke_runnable(payload, config, stream)
 
         end = time.perf_counter()
         print(f"Time taken: {end - start:.4f} seconds")
