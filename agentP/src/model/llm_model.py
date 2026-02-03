@@ -1,8 +1,8 @@
+from langchain_core.language_models import BaseLanguageModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_ollama import OllamaLLM as Ollama
 
 from agentP.src.config.config import Config
 from agentP.src.model.embedder import Embedder
@@ -12,10 +12,22 @@ from agentP.src.model.session_manager import SessionManager
 
 class LlmModel:
 
-    def __init__(self, model_name=Config.LLM_MODEL_NAME):
-        self._initialize_components(model_name)
+    def __init__(self, llm: BaseLanguageModel):
+        self._initialize_components(llm)
         self._build_chains()
 
+    def _initialize_components(self, llm: BaseLanguageModel):
+        self.session_manager = SessionManager()
+        self.rag_context_manager = RagContextManager(Embedder())
+        self.llm = llm
+
+    def _build_chains(self):
+        self.direct_chain_with_history = self._build_direct_chain_with_history()
+        self.reformulation_chain = self._build_reformulation_chain()
+        self.rag_chain_with_history = self._build_rag_chain_with_history()
+        self.full_chain = self._build_full_chain()
+
+    # ------------------- Public Methods -------------------
 
     def ask_direct(self, user_prompt: str, session_id: str, stream: bool = False):
         """Invokes the direct LLM chain without RAG."""
@@ -34,18 +46,7 @@ class LlmModel:
             return self.full_chain.invoke(user_prompt, config=config)
 
 
-    # ------------------- Chain Builders -------------------
-
-    def _initialize_components(self, model_name: str):
-        self.session_manager = SessionManager()
-        self.rag_context_manager = RagContextManager(Embedder())
-        self.llm = Ollama(model=model_name, seed=365, temperature=0)
-
-    def _build_chains(self):
-        self.direct_chain_with_history = self._build_direct_chain_with_history()
-        self.reformulation_chain = self._build_reformulation_chain()
-        self.rag_chain_with_history = self._build_rag_chain_with_history()
-        self.full_chain = self._build_full_chain()
+    # ------------------- Private Chain Builders -------------------
 
     def _build_direct_chain_with_history(self) -> RunnableWithMessageHistory:
         direct_prompt = self._get_chat_template()

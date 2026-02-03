@@ -1,5 +1,7 @@
 import uuid
 
+from agentP.src.config.config import Config
+from agentP.src.model.llm_factory import create_llm
 from agentP.src.model.llm_model import LlmModel
 from agentP.src.scraping.web_scraper import WebScraper
 
@@ -8,7 +10,11 @@ class LocalAgent:
     """Agent that uses a local language model and keeps conversation memory."""
 
     def __init__(self):
-        self.model = LlmModel()
+        llm = create_llm(
+            provider=Config.LLM_PROVIDER,
+            model_name=Config.LLM_MODEL_NAME
+        )
+        self.model = LlmModel(llm)
         self.web_scraper = WebScraper()
         self.session_id = str(uuid.uuid4())
 

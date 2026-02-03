@@ -9,22 +9,20 @@ class TestLlmModel(unittest.TestCase):
     @patch('agentP.src.model.llm_model.SessionManager')
     @patch('agentP.src.model.llm_model.RagContextManager')
     @patch('agentP.src.model.llm_model.Embedder')
-    @patch('agentP.src.model.llm_model.Ollama')
-    def setUp(self, MockOllamaClass, MockEmbedderClass, MockRagContextManagerClass, MockSessionManagerClass):
+    def setUp(self, MockEmbedderClass, MockRagContextManagerClass, MockSessionManagerClass):
         """Set up a fresh LlmModel instance for each test."""
-        # This setup is now much simpler. We only need to mock the classes
-        # that LlmModel instantiates in its constructor.
+        
+        # --- Create a mock for the LLM, which is now injected ---
+        self.mock_llm = MagicMock()
         
         # --- Instantiate the LlmModel ---
-        # The LlmModel.__init__ will run, creating real LangChain runnables
-        # internally, but they will be composed of our mocked dependencies.
-        self.llm_model = LlmModel(model_name="test-model")
+        # The LlmModel.__init__ now takes a pre-made LLM instance.
+        self.llm_model = LlmModel(self.mock_llm)
 
         # --- Override the constructed chains with MagicMocks ---
-        # After the LlmModel is created, we replace its chain attributes with
-        # mocks. This allows us to test the public methods ('ask_direct',
+        # This allows us to test the public methods ('ask_direct',
         # 'ask_with_reformulation') by checking if they call the correct
-        # internal chain, without wrestling with LangChain's complex internals.
+        # internal chain.
         self.llm_model.direct_chain_with_history = MagicMock(name="DirectChainMock")
         self.llm_model.full_chain = MagicMock(name="FullChainMock")
 

@@ -7,6 +7,9 @@ class Config:
     """Configuration class for the application."""
     STORE_TYPE = os.getenv("STORE_TYPE", "local")
     LLM_MODEL_NAME = os.getenv("QWEN_MODEL_NAME", "qwen3:1.7b")
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
+    LLM_SEED = int(os.getenv("LLM_SEED", "365"))
+    LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.0"))
     SENTENCE_TRANSFORMER_MODEL=  os.getenv("SENTENCE_TRANSFORMER_MODEL","sentence-transformers/all-MiniLM-L6-v2")
     MEMORY_FILE = os.getenv("MEMORY_FILE", "memory.json")
     URLS_FILE = os.getenv("URLS_FILE", "../../urls.txt")
