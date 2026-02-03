@@ -6,94 +6,97 @@ from agentP.src.model.llm_model import LlmModel
 
 class TestLlmModel(unittest.TestCase):
 
-    @patch('agentP.src.model.llm_model.RunnableWithMessageHistory')
     @patch('agentP.src.model.llm_model.SessionManager')
     @patch('agentP.src.model.llm_model.RagContextManager')
+    @patch('agentP.src.model.llm_model.Embedder')
     @patch('agentP.src.model.llm_model.Ollama')
-    def setUp(self, MockOllama, MockRagContextManager, MockSessionManager, MockRunnable):
+    def setUp(self, MockOllamaClass, MockEmbedderClass, MockRagContextManagerClass, MockSessionManagerClass):
         """Set up a fresh LlmModel instance for each test."""
-        self.mock_ollama = MockOllama()
-        self.mock_rag_context_manager = MockRagContextManager()
-        self.mock_session_manager = MockSessionManager()
-        self.mock_runnable = MockRunnable.return_value  # This is the instance of the runnable
-
-        # Instantiate the class, which will use the mocked dependencies
+        # This setup is now much simpler. We only need to mock the classes
+        # that LlmModel instantiates in its constructor.
+        
+        # --- Instantiate the LlmModel ---
+        # The LlmModel.__init__ will run, creating real LangChain runnables
+        # internally, but they will be composed of our mocked dependencies.
         self.llm_model = LlmModel(model_name="test-model")
 
+        # --- Override the constructed chains with MagicMocks ---
+        # After the LlmModel is created, we replace its chain attributes with
+        # mocks. This allows us to test the public methods ('ask_direct',
+        # 'ask_with_reformulation') by checking if they call the correct
+        # internal chain, without wrestling with LangChain's complex internals.
+        self.llm_model.direct_chain_with_history = MagicMock(name="DirectChainMock")
+        self.llm_model.full_chain = MagicMock(name="FullChainMock")
 
-    def test_ask_method(self):
+
+    def test_ask_direct(self):
         """
-        Tests the 'ask' method for direct LLM queries.
+        Tests that the ask_direct method invokes the direct_chain_with_history.
         """
         # --- Arrange ---
-        user_prompt = "Hello, who are you?"
-        session_id = "session_123"
-        expected_response = "I am a test bot."
-        self.mock_runnable.invoke.return_value = expected_response
-
-        # --- Act ---
-        response = self.llm_model.ask(user_prompt, session_id)
-
-        # --- Assert ---
-        # Verify that the runnable's invoke method was called correctly
-        self.mock_runnable.invoke.assert_called_once_with(
-            {"input": user_prompt},
-            config={'configurable': {'session_id': session_id}}
-        )
-        self.assertEqual(response, expected_response)
+        user_prompt = "A direct question."
+        session_id = "session_direct_1"
+        expected_response = "A direct answer."
+        self.llm_model.direct_chain_with_history.invoke.return_value = expected_response
         
-        # Ensure RAG context manager was NOT used. We access this via the instance.
-        self.llm_model.rag_context_manager.prepare_rag_prompt.assert_not_called()
-
-
-    def test_chat_with_context_method(self):
-        """
-        Tests the 'chat_with_context' method for RAG queries.
-        """
-        # --- Arrange ---
-        user_prompt = "Find me an apartment in Warsaw."
-        session_id = "session_456"
-        rag_prompt = "User question: ... Available listings: ..."
-        expected_response = "Here is an apartment in Warsaw..."
-
-        # Configure mocks
-        self.llm_model.rag_context_manager.prepare_rag_prompt.return_value = rag_prompt
-        self.mock_runnable.invoke.return_value = expected_response
-
         # --- Act ---
-        response = self.llm_model.chat_with_context(user_prompt, session_id)
+        response = self.llm_model.ask_direct(user_prompt, session_id)
 
         # --- Assert ---
-        # Verify that the RAG context manager was called
-        self.llm_model.rag_context_manager.prepare_rag_prompt.assert_called_once_with(user_prompt)
-
-        # Verify that the runnable's invoke method was called with the RAG prompt
-        self.mock_runnable.invoke.assert_called_once_with(
-            {"input": rag_prompt},
-            config={'configurable': {'session_id': session_id}}
-        )
-        self.assertEqual(response, expected_response)
-
-
-    def test_ask_method_streaming(self):
-        """
-        Tests the 'ask' method in streaming mode.
-        """
-        # --- Arrange ---
-        user_prompt = "Stream a response."
-        session_id = "session_stream_1"
-        expected_stream_chunks = ["chunk1", "chunk2"]
-        self.mock_runnable.stream.return_value = expected_stream_chunks
-
-        # --- Act ---
-        stream_response = self.llm_model.ask(user_prompt, session_id, stream=True)
-
-        # --- Assert ---
-        self.mock_runnable.stream.assert_called_once_with(
+        # Verify that the correct chain was invoked with the correct parameters
+        self.llm_model.direct_chain_with_history.invoke.assert_called_once_with(
             {"input": user_prompt},
             config={'configurable': {'session_id': session_id}}
         )
-        self.assertEqual(stream_response, expected_stream_chunks)
+        self.llm_model.full_chain.invoke.assert_not_called() # Ensure other chains weren't called
+        self.assertEqual(response, expected_response)
+
+
+    def test_ask_with_reformulation(self):
+        """
+        Tests that the ask_with_reformulation method invokes the full_chain.
+        """
+        # --- Arrange ---
+        user_prompt = "A question to be reformulated."
+        session_id = "session_reformulate_1"
+        expected_response = "An answer from the full RAG pipeline."
+        self.llm_model.full_chain.invoke.return_value = expected_response
+        
+        # --- Act ---
+        response = self.llm_model.ask_with_reformulation(user_prompt, session_id)
+
+        # --- Assert ---
+        # Verify that the correct chain was invoked with the correct parameters
+        self.llm_model.full_chain.invoke.assert_called_once_with(
+            user_prompt,
+            config={'configurable': {'session_id': session_id}}
+        )
+        self.llm_model.direct_chain_with_history.invoke.assert_not_called() # Ensure other chains weren't called
+        self.assertEqual(response, expected_response)
+
+
+    def test_ask_with_reformulation_streaming(self):
+        """
+        Tests the streaming version of ask_with_reformulation.
+        """
+        # --- Arrange ---
+        user_prompt = "A question to be streamed."
+        session_id = "session_stream_1"
+        expected_chunks = ["chunk1", "chunk2"]
+        self.llm_model.full_chain.stream.return_value = iter(expected_chunks)
+        
+        # --- Act ---
+        response_generator = self.llm_model.ask_with_reformulation(user_prompt, session_id, stream=True)
+        response_list = list(response_generator)
+
+        # --- Assert ---
+        # Verify that the correct chain's stream method was called
+        self.llm_model.full_chain.stream.assert_called_once_with(
+            user_prompt,
+            config={'configurable': {'session_id': session_id}}
+        )
+        self.llm_model.full_chain.invoke.assert_not_called()
+        self.assertEqual(response_list, expected_chunks)
 
 
 if __name__ == '__main__':

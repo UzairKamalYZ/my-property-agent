@@ -1,7 +1,8 @@
 import uuid
 
-from model.llm_model import LlmModel
-from scraping.web_scraper import WebScraper
+from agentP.src.model.llm_model import LlmModel
+from agentP.src.scraping.web_scraper import WebScraper
+
 
 class LocalAgent:
     """Agent that uses a local language model and keeps conversation memory."""
@@ -12,8 +13,10 @@ class LocalAgent:
         self.session_id = str(uuid.uuid4())
 
     def ask(self, prompt: str, stream=False):
-        """Send prompt to model and remember conversation."""
-        return self.model.chat_with_context(prompt, self.session_id, stream=stream)
+        """
+        Asks the model a question using the full RAG and reformulation pipeline.
+        """
+        return self.model.ask_with_reformulation(prompt, self.session_id, stream=stream)
 
     def __enter__(self):
         return self

@@ -3,7 +3,7 @@ from typing import Any
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
-from agentP.src.config import Config
+from agentP.src.config.config import Config
 from agentP.src.persistence.factory import create_vector_store
 
 
