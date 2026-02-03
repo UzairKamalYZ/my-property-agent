@@ -35,7 +35,6 @@ if __name__ == "__main__":
                 if q.lower() in ["exit", "quit"]:
                     break
 
-
                 print("AI:", end="", flush=True)
                 for chunk in agent.ask(q, stream=True):
                     print(chunk, end="", flush=True)

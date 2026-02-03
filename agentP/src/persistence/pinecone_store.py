@@ -22,7 +22,8 @@ class PineconeStore(VectorStore):
         for vector, meta in zip(vectors, metadata):
             items.append((str(uuid.uuid4()), vector.tolist(), meta))
         self.index.upsert(items)
-
+    def add_vectors(self, vectors):
+        self.index.upsert(vectors)
     def search(self, query_vector, k):
         results = self.index.query(
             vector=query_vector[0].tolist(),

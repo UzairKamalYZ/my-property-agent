@@ -19,8 +19,8 @@ class DataCollector:
         self.data = self.url_processor.process_urls_from_file(file_path)
         return self
 
-    def __getVectorEmbeddings__(self):
-        self.embedder.embed(self.data)
+    def __storVectorEmbeddings__(self):
+        self.embedder.embed_documents_to_vectors(self.data)
         return self
 
     def __enter__(self):
@@ -38,8 +38,4 @@ if __name__ == "__main__":
     print("🤖 Lets Collect data and build index for it.!")
     with (DataCollector() as collector):
         cf = config.Config()
-        embeddings = collector.__getDataFromUrls__(cf.URLS_FILE).__getVectorEmbeddings__()
-
-        top_listings = collector.__getRankedListings__()
-        for i, listing in enumerate(top_listings, 1):
-            print(f"{i}. {listing}")
+        embeddings = collector.__getDataFromUrls__(cf.URLS_FILE).__storVectorEmbeddings__()

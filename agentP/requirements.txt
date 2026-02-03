@@ -83,3 +83,4 @@ zstandard==0.25.0
 selenium==4.11.2
 sentence-transformers
 faiss-cpu
+pandas

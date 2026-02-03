@@ -11,16 +11,22 @@ from agentP.src.model.embedder import Embedder
 class LlmModel:
 
     def __init__(self, model_name=Config.LLM_MODEL_NAME):
+        self.store = {}
+        self.embedder = Embedder()
+
         self.llm = Ollama(
             model=model_name,
             seed=365,
             temperature=0
         )
 
-        self.embedder = Embedder()
-        self.store = {}
+        self.chat_template = self.get_chat_template()
 
-        self.chat_template = ChatPromptTemplate.from_messages(
+        self.chain = self.chat_template | self.llm
+
+
+    def get_chat_template(self) -> ChatPromptTemplate:
+        return ChatPromptTemplate.from_messages(
             [
                 (
                     "system",
@@ -33,8 +39,6 @@ class LlmModel:
                 ("human", "{input}"),
             ]
         )
-
-        self.chain = self.chat_template | self.llm
 
     # -------------------------------
     # Vector Retrieval
@@ -56,21 +60,40 @@ class LlmModel:
         if not listings:
             return "No listings found."
 
+        def safe(v, suffix=""):
+            if v is None or str(v) == "nan" or v == "":
+                return "N/A"
+            return f"{v}{suffix}"
+
         blocks = []
-        for i, l in enumerate(listings, 1):
+
+        for i, l in enumerate(listings, start=1):
             blocks.append(
                 f"""
-                Listing {i}:
-                Location: {l.get("city", "N/A")}
-                Price: {l.get("price", "N/A")} EUR
-                Bedrooms: {l.get("bedrooms", "N/A")}
-                Surface: {l.get("surface", "N/A")} m²
-                Type: {l.get("type", "N/A")}
-                Description: {l.get("description", "N/A")}
-                """
+    Listing {i}
+    Location: {safe(l.get("city"))}
+    Price: {safe(l.get("price"), " PLN")}
+    Rooms: {safe(l.get("rooms"))}
+    Surface: {safe(l.get("squareMeters"), " m²")}
+    Floor: {safe(l.get("floor"))} / {safe(l.get("floorCount"))}
+    Type: {safe(l.get("type"))}
+    Ownership: {safe(l.get("ownership"))}
+    Building material: {safe(l.get("buildingMaterial"))}
+    Condition: {safe(l.get("condition"))}
+    Amenities: {', '.join([a for a in [
+                        "Parking" if l.get("hasParkingSpace") else None,
+                        "Balcony" if l.get("hasBalcony") else None,
+                        "Elevator" if l.get("hasElevator") else None,
+                        "Security" if l.get("hasSecurity") else None,
+                        "Storage" if l.get("hasStorageRoom") else None,
+                    ] if a
+                ]) or "None"}
+    Description:
+    {safe(l.get("text"))}
+    """.strip()
             )
 
-        return "\n".join(blocks)
+        return "\n\n".join(blocks)
 
     # -------------------------------
     # Session Memory
