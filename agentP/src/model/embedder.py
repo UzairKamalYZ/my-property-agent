@@ -4,7 +4,6 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 
 from agentP.src.config import Config
-from agentP.src.scraping.utils import listings_to_documents
 from agentP.src.persistence.factory import create_vector_store
 
 
@@ -60,19 +59,27 @@ class Embedder:
                 "metadata": metadatas[i]
             })
 
-
         return vectors
 
     def save_vectors_in_store(self, vectors: list[Any]):
-        self.__getStore__().add_vectors(vectors)
+        self.get_store().add_vectors(vectors)
 
-    def __getStore__(self,dim=384):
-        self.store = create_vector_store(
-            store_type=Config.STORE_TYPE,
-            dim=dim,
-            config={}
-        )
+    def get_store(self, dim=384):
+        if not self.store:
+            self.store = create_vector_store(
+                store_type=Config.STORE_TYPE,
+                dim=dim,
+                config={}
+            )
         return self.store
+
+    def search(self, query: str, k: int = 5):
+        store = self.get_store()
+        if store is None:
+            raise ValueError("Vector index not initialized. Build embeddings first.")
+
+        query_vec = self.embed_query(query)
+        return store.search(query_vec, k)
 
     def embed_texts(self, texts: list[str]) -> np.ndarray:
         vectors = self.model.encode(texts)

@@ -13,7 +13,7 @@ class LocalAgent:
 
     def ask(self, prompt: str, stream=False):
         """Send prompt to model and remember conversation."""
-        return self.model.chat(prompt, self.session_id, stream=stream)
+        return self.model.chat_with_context(prompt, self.session_id, stream=stream)
 
     def __enter__(self):
         return self

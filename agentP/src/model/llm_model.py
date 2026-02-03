@@ -40,17 +40,7 @@ class LlmModel:
             ]
         )
 
-    # -------------------------------
-    # Vector Retrieval
-    # -------------------------------
 
-    def retrieve(self, query: str, k: int = 5):
-        store = self.embedder.__getStore__()
-        if store is None:
-            raise ValueError("Vector index not initialized. Build embeddings first.")
-
-        query_vec = self.embedder.embed_query(query)
-        return store.search(query_vec, k)
 
     # -------------------------------
     # Context Builder
@@ -108,7 +98,7 @@ class LlmModel:
     # Chat Entry Point (RAG)
     # -------------------------------
 
-    def chat(self, user_prompt: str, session_id: str, stream: bool = False):
+    def chat_with_context(self, user_prompt: str, session_id: str, stream: bool = False):
 
         runnable = RunnableWithMessageHistory(
             self.chain,
@@ -120,7 +110,7 @@ class LlmModel:
         start = time.perf_counter()
 
         # 1. Retrieve relevant listings
-        listings = self.retrieve(user_prompt, k=5)
+        listings = self.embedder.search(user_prompt, k=5)
 
         # 2. Build LLM-ready context
         context = self._build_context(listings)
