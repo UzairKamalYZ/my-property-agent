@@ -1,7 +1,7 @@
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda, RunnableSerializable
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
 from agentP.src.config.config import Config
@@ -37,19 +37,33 @@ class LlmModel:
         else:
             return self.direct_chain_with_history.invoke({"input": user_prompt}, config=config)
 
-    def ask_with_reformulation(self, user_prompt: str, session_id: str, stream: bool = False):
+    def ask_with_reformulation(self, system_prompt: str, user_query: str, session_id: str, stream=False):
         """Invokes the full RAG chain which includes prompt reformulation."""
         config = {"configurable": {"session_id": session_id}}
+        
+        chat_template = self._get_chat_template()
+        chain = chat_template | self.llm | StrOutputParser()
+
+        history = self.session_manager.get_session_history(session_id)
+        
         if stream:
-            return self.full_chain.stream(user_prompt, config=config)
+            return chain.stream(
+                {"system_prompt": system_prompt, "user_query": user_query, "history": history.messages})
         else:
-            return self.full_chain.invoke(user_prompt, config=config)
+            return chain.invoke(
+                {"system_prompt": system_prompt, "user_query": user_query, "history": history.messages})
 
 
     # ------------------- Private Chain Builders -------------------
 
     def _build_direct_chain_with_history(self) -> RunnableWithMessageHistory:
-        direct_prompt = self._get_chat_template()
+        direct_prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", "{system_prompt}"),
+                MessagesPlaceholder(variable_name="history"),
+                ("human", "{input}"),
+            ]
+        )
         direct_chain = direct_prompt | self.llm | StrOutputParser()
         return RunnableWithMessageHistory(
             direct_chain,
@@ -58,7 +72,7 @@ class LlmModel:
             history_messages_key="history",
         )
 
-    def _build_reformulation_chain(self) -> RunnableWithMessageHistory:
+    def _build_reformulation_chain(self) -> RunnableSerializable[dict, str]:
         reformulate_prompt = ChatPromptTemplate.from_template(
             "Based on the user's request, formulate a concise and effective "
             "prompt to search for real estate listings. The user's request is: '{user_prompt}'"
@@ -94,9 +108,9 @@ class LlmModel:
     def _get_chat_template() -> ChatPromptTemplate:
         return ChatPromptTemplate.from_messages(
             [
-                ("system", Config.PROMPT),
+                ("system", "{system_prompt}"),
                 MessagesPlaceholder(variable_name="history"),
-                ("human", "{input}"),
+                ("human", "{user_query}"),
             ]
         )
 

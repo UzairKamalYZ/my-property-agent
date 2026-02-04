@@ -84,3 +84,5 @@ selenium==4.11.2
 sentence-transformers
 faiss-cpu
 pandas
+
+rich
