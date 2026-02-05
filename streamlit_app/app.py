@@ -6,7 +6,25 @@ import random
 # Configuration for the Agent REST API
 AGENT_API_URL = "http://localhost:8000/ask"
 
-st.title("Property Agent Chat")
+st.set_page_config(layout="wide") # Set page layout to wide
+
+# Custom CSS for background image
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-image: url("https://www.rawpixel.com/image/5908905/free-apartment-image-public-domain-cc0-photo");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.title(" Your own mini property agent 🕵️‍♂️🏡")
 
 # Initialize chat history
 if "messages" not in st.session_state:
