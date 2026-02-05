@@ -1,6 +1,6 @@
 # My Property Agent
 
-My Property Agent is a conversational AI agent designed to answer your questions about properties. It uses a local large language model (LLM) via Ollama to understand and respond to your queries.
+My Property Agent is a conversational AI agent designed to answer your questions about properties. It uses a local large language model (LLM) via Ollama to understand and respond to your queries. This project also includes a Streamlit frontend for interactive chat.
 
 ## Features
 
@@ -10,6 +10,7 @@ My Property Agent is a conversational AI agent designed to answer your questions
 *   **Configurable:** The agent's model can be easily configured through a `.env` file.
 *   **Web Scraping:** The agent can scrape content from a list of URLs to provide more context for its answers.
 *   **RESTful API:** The agent can be exposed as a RESTful service.
+*   **Streamlit Frontend:** An interactive web application built with Streamlit to chat with the agent.
 
 ## Getting Started
 
@@ -26,76 +27,99 @@ My Property Agent is a conversational AI agent designed to answer your questions
     cd my-property-agent
     ```
 
-2.  Create and activate a virtual environment:
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate
-    ```
-
-3.  Install the dependencies:
+2.  Create and activate a virtual environment for `agentP` (recommended):
     ```bash
     cd agentP
-pip install -r requirements.txt
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+    cd .. # Go back to project root
+    ```
+
+3.  Create and activate a virtual environment for `streamlit_app` (recommended):
+    ```bash
+    cd streamlit_app
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+    cd .. # Go back to project root
     ```
 
 ### Configuration
 
-1.  Create a `.env` file in the `agentP` directory.
+1.  Create a `.env` file in the `agentP` directory (e.g., `agentP/.env`).
 
-2.  Modify the `.env` file to set your desired configuration:
-    *   `QWEN_MODEL_NAME`: The name of the Ollama model to use (e.g., `qwen3:1.7b`).
-    *   `MEMORY_FILE`: The name of the file to use for conversation history (e.g., `memory.json`).
-    *   `URLS_FILE`: The name of the file containing URLs to scrape (e.g., `urls.txt`).
+2.  Modify the `agentP/.env` file to set your desired configuration (e.g., LLM model name, API keys). An example is provided in the `agentP` directory.
 
-## Running the Agent as a Standalone Script
+3.  The Streamlit app's API URL is configured in `streamlit_app/config.py`.
 
-To start the agent as a standalone script, run the following command:
+## Running the Agent
 
-```bash
-cd agentP
-PYTHONPATH=.. python3 src/agent.py
-```
+### Running the Agent as a Standalone Script
 
-## Running the RESTful Service
-
-To run the agent as a RESTful service, use the following command:
+To start the agent as a standalone script (for testing or direct interaction), run the following command from the project root:
 
 ```bash
-cd agentP
-PYTHONPATH=.. uvicorn src.agentRest:app --reload
+cd /Users/uzairkamal/work/my-property-agent
+# Activate agentP's venv if not already active
+# source agentP/venv/bin/activate
+PYTHONPATH=. python3 agentP/src/agent.py
 ```
 
-The service will be available at `http://127.0.0.1:8000`.
+### Running the RESTful Service (Backend for Streamlit App)
 
-### API Usage
+To run the agent as a RESTful service, which the Streamlit frontend will connect to, use the following command from the **project root**:
+
+```bash
+cd /Users/uzairkamal/work/my-property-agent
+# Activate agentP's venv
+# source agentP/venv/bin/activate
+uvicorn agentP.src.agentRest:app --host 0.0.0.0 --port 8000 --reload
+```
+
+The service will be available at `http://localhost:8000`. Keep this terminal window open and the server running.
+
+### Running the Streamlit Frontend
+
+To run the interactive chat application:
+
+1.  **Ensure the `agentP` RESTful Service is running** (as described above).
+2.  Open a **new terminal window**.
+3.  Navigate to the `streamlit_app` directory:
+    ```bash
+    cd /Users/uzairkamal/work/my-property-agent/streamlit_app
+    ```
+4.  Activate the `streamlit_app`'s virtual environment:
+    ```bash
+    source venv/bin/activate
+    ```
+5.  Run the Streamlit application:
+    ```bash
+    streamlit run app.py
+    ```
+    This will open the Streamlit application in your web browser.
+
+For more detailed instructions on the Streamlit application, refer to `streamlit_app/README.md`.
+
+## API Usage (for the RESTful Service)
 
 You can interact with the service using `curl` or any other API client.
 
 **Example `curl` command:**
 
 ```bash
-curl "http://127.0.0.1:8000/ask?prompt=Hello"
+curl "http://localhost:8000/ask?prompt=Hello"
 ```
 
 **Streaming Example:**
 
 ```bash
-curl "http://127.0.0.1:8000/ask?prompt=Hello&stream=True"
-```
-
-## Frontend (Chatty)
-
-To run the frontend application, use the following commands:
-
-```bash
-cd chatty
-npm install
-npm run dev
+curl "http://localhost:8000/ask?prompt=Hello&stream=True"
 ```
 
 ## Testing
 
-To run the tests, use pytest:
+To run the tests for the `agentP` module, navigate to the `agentP` directory and use pytest:
 
 ```bash
 cd agentP
@@ -106,38 +130,25 @@ pytest
 
 ```
 .
-├── README.md
-├── agentP
-│   ├── requirements.txt
-│   ├── urls.txt
-│   ├── src
-│   │   ├── agent.py
-│   │   ├── config.py
-│   │   ├── __init__.py
-│   │   ├── main.py
-│   │   ├── model
-│   │   │   └── llm_model.py
-│   │   └── scraping
-│   │       ├── url_processor.py
-│   │       └── web_scraper.py
-│   └── tests
-│       ├── __init__.py
-│       ├── test_agent.py
-│       ├── test_config.py
-│       ├── test_llm_model.py
-│       └── test_web_scraper.py
-├── chatty
-│   ├── public
-│   ├── src
-│   │   ├── App.css
-│   │   ├── App.tsx
-│   │   ├── index.css
-│   │   └── main.tsx
-│   ├── index.html
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── tsconfig.node.json
-│   └── vite.config.ts
+├── README.md                  <- This main README file
+├── agentP/                    <- Contains the core agent logic and REST API
+│   ├── .env                   <- Environment variables for agentP
+│   ├── prompts/               <- Agent's prompts and interaction texts
+│   │   ├── interaction.json
+│   │   └── System_Prompt.txt
+│   ├── requirements.txt       <- Python dependencies for agentP
+│   ├── src/                   <- AgentP source code
+│   │   ├── agent.py           <- Core LocalAgent implementation
+│   │   ├── agentRest.py       <- FastAPI application for agentP REST API
+│   │   └── ... (other agentP source files)
+│   └── venv/                  <- Python virtual environment for agentP
+├── streamlit_app/             <- Streamlit frontend application
+│   ├── app.py                 <- Main Streamlit application file
+│   ├── config.py              <- Configuration for Streamlit app (e.g., API URL)
+│   ├── README.md              <- README for the Streamlit app
+│   ├── requirements.txt       <- Python dependencies for Streamlit app
+│   └── venv/                  <- Python virtual environment for Streamlit app
+└── ... (other project files like .gitignore, .idea, etc.)
 ```
 
 ## Contributing
