@@ -1,8 +1,9 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse
-from agentP.src.agent import LocalAgent
 import asyncio
+
+from agentP.src.agent import LocalAgent
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

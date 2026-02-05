@@ -1,47 +1,51 @@
-# Streamlit Application
+# Streamlit Property Agent Chat Application
 
-This directory contains a simple Streamlit application.
+This Streamlit application provides a user interface for interacting with the Property Agent backend. It allows users to enter prompts and receive responses from the agent via a REST API.
 
 ## Setup
 
-To set up the application, you need to create a Python virtual environment and install the required dependencies.
-
-1.  **Navigate to the application directory:**
+1.  **Navigate to the Streamlit application directory:**
     ```bash
-    cd streamlit_app
+    cd /Users/uzairkamal/work/my-property-agent/streamlit_app
     ```
 
-2.  **Create a virtual environment (if you haven't already):**
+2.  **Activate your Python virtual environment:**
     ```bash
-    python3 -m venv venv
+    source venv/bin/activate
     ```
+    (If you don't have one, create it first: `python3 -m venv venv`)
 
-3.  **Activate the virtual environment:**
-    *   On macOS/Linux:
-        ```bash
-        source venv/bin/activate
-        ```
-    *   On Windows:
-        ```bash
-        .\venv\Scripts\activate
-        ```
-
-4.  **Install dependencies:**
+3.  **Install dependencies:**
     ```bash
     pip install -r requirements.txt
     ```
-    (Note: The `requirements.txt` file should have been generated automatically during setup.)
 
 ## Running the Application
 
-Once the setup is complete and the virtual environment is activated, you can run the Streamlit application using the following command:
+This application requires the `agentP` REST API server to be running in the background.
 
-```bash
-streamlit run app.py
-```
+1.  **Start the Agent REST API Server:**
 
-After running the command, Streamlit will typically open a new tab in your web browser with the application. If not, it will provide a local URL (usually `http://localhost:8501`) that you can navigate to.
+    Open a **new terminal window**.
+    Navigate to the **project root directory** (`/Users/uzairkamal/work/my-property-agent`):
+    ```bash
+    cd /Users/uzairkamal/work/my-property-agent
+    ```
+    Activate the virtual environment for `agentP` (if you have one, e.g., `agentP/venv`):
+    ```bash
+    source agentP/venv/bin/activate
+    ```
+    Run the `uvicorn` command to start the API server with auto-reloading:
+    ```bash
+    uvicorn agentP.src.agentRest:app --host 0.0.0.0 --port 8000 --reload
+    ```
+    Keep this terminal window open and the server running.
 
-## Application Content
+2.  **Run the Streamlit Application:**
 
-This is a basic "Hello, Streamlit!" application that demonstrates fundamental Streamlit functionalities. You can modify `app.py` to build more complex interactive dashboards and tools.
+    In your **first terminal window** (where you set up the Streamlit app), ensure your Streamlit virtual environment is active.
+    Run the Streamlit application:
+    ```bash
+    streamlit run app.py
+    ```
+    This will open the Streamlit application in your web browser, which will now send requests to the running `agentP` REST API server.

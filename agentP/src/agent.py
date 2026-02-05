@@ -1,7 +1,6 @@
 import uuid
 import json
 from rich.console import Console
-from rich.spinner import Spinner
 
 from agentP.src.config.config import Config
 from agentP.src.model.llm_factory import create_llm
