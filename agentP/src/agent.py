@@ -27,7 +27,7 @@ class LocalAgent:
         """
         with open(Config.PROMPT_FILE, "r") as f:
             system_prompt = f.read()
-        return self.model.ask_with_reformulation(system_prompt, prompt, self.session_id, stream=stream)
+        return self.model.ask(system_prompt, prompt, self.session_id, stream=stream)
 
     def __enter__(self):
         return self

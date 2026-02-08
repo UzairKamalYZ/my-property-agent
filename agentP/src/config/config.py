@@ -18,3 +18,4 @@ class Config:
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
     PROMPT_FILE = os.path.join( os.getenv("PROMPT_FILE"))
     INTERACTION_FILE = os.path.join(os.getenv("INTERACTION_FILE"))
+    REFORMULATION_PROMPT = os.path.join(os.getenv("REFORMULATION_PROMPT"))

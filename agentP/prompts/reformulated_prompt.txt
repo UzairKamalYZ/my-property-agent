@@ -1,0 +1,2 @@
+Based on the user's request, formulate a concise and effective
+prompt to search for real estate listings. The user's request is: '{user_prompt}'

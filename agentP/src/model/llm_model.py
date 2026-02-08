@@ -13,6 +13,7 @@ from agentP.src.model.session_manager import SessionManager
 class LlmModel:
 
     def __init__(self, llm: BaseLanguageModel):
+        self.system_prompt = LlmModel.getPrompt(Config.PROMPT_FILE)
         self._initialize_components(llm)
         self._build_chains()
 
@@ -28,38 +29,24 @@ class LlmModel:
         self.full_chain = self._build_full_chain()
 
     # ------------------- Public Methods -------------------
-
-    def ask_direct(self, user_prompt: str, session_id: str, stream: bool = False):
-        """Invokes the direct LLM chain without RAG."""
-        config = {"configurable": {"session_id": session_id}}
-        if stream:
-            return self.direct_chain_with_history.stream({"input": user_prompt}, config=config)
-        else:
-            return self.direct_chain_with_history.invoke({"input": user_prompt}, config=config)
-
-    def ask_with_reformulation(self, system_prompt: str, user_query: str, session_id: str, stream=False):
+    def ask(self, system_prompt: str, user_query: str, session_id: str, stream=False):
         """Invokes the full RAG chain which includes prompt reformulation."""
+
         config = {"configurable": {"session_id": session_id}}
-        
-        chat_template = self._get_chat_template()
-        chain = chat_template | self.llm | StrOutputParser()
 
-        history = self.session_manager.get_session_history(session_id)
-        
+        input_for_full_chain = {"user_prompt": user_query}
+
         if stream:
-            return chain.stream(
-                {"system_prompt": system_prompt, "user_query": user_query, "history": history.messages})
+            return self.full_chain.stream(input_for_full_chain, config)
         else:
-            return chain.invoke(
-                {"system_prompt": system_prompt, "user_query": user_query, "history": history.messages})
-
+            return self.full_chain.invoke(input_for_full_chain, config)
 
     # ------------------- Private Chain Builders -------------------
 
     def _build_direct_chain_with_history(self) -> RunnableWithMessageHistory:
         direct_prompt = ChatPromptTemplate.from_messages(
             [
-                ("system", "{system_prompt}"),
+                ("system", self.system_prompt),
                 MessagesPlaceholder(variable_name="history"),
                 ("human", "{input}"),
             ]
@@ -73,10 +60,7 @@ class LlmModel:
         )
 
     def _build_reformulation_chain(self) -> RunnableSerializable[dict, str]:
-        reformulate_prompt = ChatPromptTemplate.from_template(
-            "Based on the user's request, formulate a concise and effective "
-            "prompt to search for real estate listings. The user's request is: '{user_prompt}'"
-        )
+        reformulate_prompt = LlmModel._reformulated_prompt_template()
         return reformulate_prompt | self.llm | StrOutputParser()
 
     def _build_rag_chain_with_history(self) -> RunnableWithMessageHistory:
@@ -104,15 +88,6 @@ class LlmModel:
         )
 
 
-    @staticmethod
-    def _get_chat_template() -> ChatPromptTemplate:
-        return ChatPromptTemplate.from_messages(
-            [
-                ("system", "{system_prompt}"),
-                MessagesPlaceholder(variable_name="history"),
-                ("human", "{user_query}"),
-            ]
-        )
 
     @staticmethod
     def _get_rag_prompt_template() -> ChatPromptTemplate:
@@ -123,7 +98,16 @@ class LlmModel:
         """
         return ChatPromptTemplate.from_template(template)
 
+    @staticmethod
+    def getPrompt(file) -> str:
+        with open(file, "r") as f:
+            template = f.read()
+        return template
 
+    @staticmethod
+    def _reformulated_prompt_template() -> ChatPromptTemplate:
+        template = LlmModel.getPrompt(Config.REFORMULATION_PROMPT)
+        return ChatPromptTemplate.from_template(template)
     def close(self):
         """Cleanup hook (not needed for Ollama)."""
         pass
