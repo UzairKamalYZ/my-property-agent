@@ -19,3 +19,7 @@ class Config:
     PROMPT_FILE = os.path.join( os.getenv("PROMPT_FILE"))
     INTERACTION_FILE = os.path.join(os.getenv("INTERACTION_FILE"))
     REFORMULATION_PROMPT = os.path.join(os.getenv("REFORMULATION_PROMPT"))
+    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false")
+    LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
+    LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "my-property-agent")

@@ -2,9 +2,9 @@ from typing import Any, Dict, List, Union, Tuple
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
-from agentP.src.config.config import Config
-from agentP.src.persistence.factory import create_vector_store
-from agentP.src.persistence.vector_store import VectorStore
+from src.config.config import Config
+from src.persistence.factory import create_vector_store
+from src.persistence.vector_store import VectorStore
 
 
 class Embedder:

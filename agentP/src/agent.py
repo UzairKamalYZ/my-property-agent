@@ -2,15 +2,17 @@ import uuid
 import json
 from rich.console import Console
 
-from agentP.src.config.config import Config
-from agentP.src.model.llm_factory import create_llm
-from agentP.src.model.llm_model import LlmModel
-from agentP.src.scraping.web_scraper import WebScraper
+from src.config.config import Config
+from src.model.llm_factory import create_llm
+from src.model.llm_model import LlmModel
+from src.scraping.web_scraper import WebScraper
+
 
 class LocalAgent:
-    """Agent that uses a local language model and keeps conversation memory."""
+    """Agent that uses a LangGraph-based local language model with memory."""
 
     def __init__(self):
+        print(">>>>>> LocalAgent.__init__ called <<<<<<")
         llm = create_llm(
             provider=Config.LLM_PROVIDER,
             model_name=Config.LLM_MODEL_NAME
@@ -36,26 +38,31 @@ class LocalAgent:
         self.close()
 
     def close(self):
-        """Close the agent and release resources."""
+        """Cleanup resources."""
         self.model.close()
+
+
+# ------------------- CLI -------------------
 
 if __name__ == "__main__":
     console = Console()
     agent = LocalAgent()
+
     console.print(agent.interaction_texts["welcome_message"])
     console.print(agent.interaction_texts["welcome_prompt"])
+
     with agent:
         try:
             while True:
                 q = input(agent.interaction_texts["input_prompt"])
+
                 if q.lower() in ["exit", "quit"]:
                     break
 
                 with console.status(agent.interaction_texts["thinking_message"]):
-                    response = ""
-                    for chunk in agent.ask(q, stream=True):
-                        response += chunk
-                    console.print(response)
+                    response = agent.ask(q)
+
+                console.print(response)
 
         except KeyboardInterrupt:
             console.print(agent.interaction_texts["goodbye_message"])

@@ -1,7 +1,7 @@
 from langchain_core.language_models import BaseLanguageModel
 from langchain_ollama import OllamaLLM as Ollama
 
-from agentP.src.config.config import Config
+from src.config.config import Config
 
 
 def create_llm(provider: str, model_name: str) -> BaseLanguageModel:

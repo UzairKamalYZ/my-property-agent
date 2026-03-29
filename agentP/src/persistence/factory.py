@@ -1,7 +1,7 @@
 # vector_store/factory.py
 from .faiss_store import FAISSStore
 from .pinecone_store import PineconeStore
-from agentP.src.config.config import Config
+from src.config.config import Config
 
 
 def create_vector_store(store_type: str, dim: int, config: dict):
