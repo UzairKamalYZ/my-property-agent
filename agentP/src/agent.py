@@ -2,10 +2,10 @@ import uuid
 import json
 from rich.console import Console
 
-from src.config.config import Config
-from src.model.llm_factory import create_llm
-from src.model.llm_model import LlmModel
-from src.scraping.web_scraper import WebScraper
+from config.config import Config
+from model.llm_factory import create_llm
+from model.llm_model import LlmModel
+from scraping.web_scraper import WebScraper
 
 
 class LocalAgent:

@@ -1,13 +1,32 @@
 import logging
+import os
+import random
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
 
-from .agent import LocalAgent
-from .config.config import Config
+WAITING_JOKES = [
+    "Why did the scarecrow win an award? Because he was outstanding in his field — much like your future home!",
+    "Why do real estate agents make great comedians? Because they always know how to close!",
+    "What do you call a haunted property? A buy-one-get-one-scare deal.",
+    "Why did the house go to therapy? It had too many issues with its foundation.",
+    "What did the ocean say to the beach house? Nothing, it just waved.",
+    "Why don't houses ever get lonely? Because they're always in a good neighbourhood.",
+    "What's a real estate agent's favourite type of music? House!",
+]
+
+from agent import LocalAgent
+from config.config import Config
+
+LOG_FILE = "logs/telegram_agent.log"
+os.makedirs("logs", exist_ok=True)
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+    ],
 )
 logger = logging.getLogger(__name__)
 
@@ -30,7 +49,10 @@ class MyTelegramAgent:
         user_text = update.message.text
         logger.info(f"Received message from {update.effective_user.id}: {user_text}")
 
-        sent = await update.message.reply_text("Your personal property agent is thinking...")
+        joke = random.choice(WAITING_JOKES)
+        sent = await update.message.reply_text(
+            f"Your personal property agent is thinking...\n\n💡 While you wait: {joke}"
+        )
 
         try:
             accumulated = ""

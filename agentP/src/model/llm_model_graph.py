@@ -1,6 +1,9 @@
+import logging
 import os
 import uuid
 from typing import TypedDict, List
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.messages import HumanMessage, AIMessage
@@ -10,9 +13,9 @@ from langsmith import traceable
 
 from langgraph.graph import StateGraph, START, END
 
-from src.config.config import Config
-from src.model.embedder import Embedder
-from src.model.rag_context_manager import RagContextManager
+from ..config.config import Config
+from .embedder import Embedder
+from .rag_context_manager import RagContextManager
 
 # LangSmith picks these up automatically from the environment
 os.environ.setdefault("LANGCHAIN_TRACING_V2", Config.LANGCHAIN_TRACING_V2)
@@ -97,16 +100,21 @@ class LlmModelGraph:
     # ------------------- NODES -------------------
 
     def _reformulate_node(self, state: State) -> dict:
+        logger.info("[reformulate] input: %s", state["user_prompt"])
         prompt = ChatPromptTemplate.from_template(self.reformulation_template)
         chain = prompt | self.llm | StrOutputParser()
         reformulated = chain.invoke({"user_prompt": state["user_prompt"]})
+        logger.info("[reformulate] output: %s", reformulated)
         return {"reformulated_question": reformulated}
 
     def _retrieve_node(self, state: State) -> dict:
+        logger.info("[retrieve] querying with: %s", state["reformulated_question"])
         context = self.rag_context_manager.get_context(state["reformulated_question"])
+        logger.info("[retrieve] context length: %d chars", len(context))
         return {"context": context}
 
     def _generate_node(self, state: State) -> dict:
+        logger.info("[generate] history turns: %d", len(state["history"]))
         prompt = ChatPromptTemplate.from_messages([
             ("system", self.system_prompt),
             MessagesPlaceholder(variable_name="history"),
@@ -123,6 +131,7 @@ class LlmModelGraph:
             HumanMessage(content=state["user_prompt"]),
             AIMessage(content=answer),
         ]
+        logger.info("[generate] answer length: %d chars", len(answer))
         return {"answer": answer, "history": updated_history}
 
     # ------------------- HELPERS -------------------

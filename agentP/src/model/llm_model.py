@@ -4,10 +4,10 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda, RunnableSerializable
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
-from src.config.config import Config
-from src.model.embedder import Embedder
-from src.model.rag_context_manager import RagContextManager
-from src.model.session_manager import SessionManager
+from config.config import Config
+from .embedder import Embedder
+from .rag_context_manager import RagContextManager
+from .session_manager import SessionManager
 
 
 class LlmModel:

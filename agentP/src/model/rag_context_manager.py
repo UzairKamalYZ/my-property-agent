@@ -1,5 +1,5 @@
-from src.model.embedder import Embedder
-from src.model.context_builder import build_context_from_listings
+from .embedder import Embedder
+from .context_builder import build_context_from_listings
 
 
 class RagContextManager:
