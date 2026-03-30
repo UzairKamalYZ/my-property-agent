@@ -42,3 +42,9 @@ _stub("faiss")
 # sentence_transformers — used by model/embedder.py
 _st = _stub("sentence_transformers")
 _st.SentenceTransformer = MagicMock
+
+# langchain_community — used by model/session_manager.py
+_lc_comm = _stub("langchain_community")
+_lc_hist = _stub("langchain_community.chat_message_histories")
+_lc_hist.SQLChatMessageHistory = MagicMock
+_lc_comm.chat_message_histories = _lc_hist
