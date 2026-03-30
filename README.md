@@ -1,275 +1,345 @@
 # My Property Agent
 
-My Property Agent is a conversational AI agent designed to answer your questions about properties. It uses a local large language model (LLM) via Ollama to understand and respond to your queries. This project also includes a Streamlit frontend for interactive chat.
-
-## Features
-
-*   **Conversational Interface:** Interact with the agent in a natural, conversational way.
-*   **Conversation Memory:** The agent remembers the context of your conversation, allowing for follow-up questions.
-*   **Streaming Responses:** Get responses from the agent as they are generated, providing a more interactive experience.
-*   **Configurable:** The agent's model can be easily configured through a `.env` file.
-*   **Web Scraping:** The agent can scrape content from a list of URLs to provide more context for its answers.
-*   **RESTful API:** The agent can be exposed as a RESTful service.
-*   **Streamlit Frontend:** An interactive web application built with Streamlit to chat with the agent.
-*   **Telegram Bot:** Receive and respond to messages via a Telegram bot (`MyTelegramAgent`).
-*   **LangGraph RAG Pipeline:** Core inference is powered by a structured LangGraph graph (`LlmModelGraph`).
-*   **LangSmith Observability:** Full trace visibility of every run via LangSmith.
-
-## Architecture
-
-### LangGraph RAG Pipeline (`LlmModelGraph`)
-
-Every user query flows through a three-node LangGraph pipeline before a response is returned.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      LlmModelGraph                              │
-│                                                                 │
-│   User Query                                                    │
-│       │                                                         │
-│       ▼                                                         │
-│  ┌──────────┐     reformulated     ┌──────────┐                 │
-│  │ REFORMU- │ ──────question──────▶│ RETRIEVE │                 │
-│  │  LATE    │                      │          │                 │
-│  │          │                      │ Pinecone │                 │
-│  │ llama3.2 │                      │ (RAG)    │                 │
-│  └──────────┘                      └──────────┘                 │
-│                                         │                       │
-│                                      context                    │
-│                                         │                       │
-│                                         ▼                       │
-│                                   ┌──────────┐                  │
-│                                   │ GENERATE │                  │
-│                                   │          │                  │
-│                                   │ system   │                  │
-│                                   │ prompt + │                  │
-│                                   │ history  │                  │
-│                                   │ + context│                  │
-│                                   │          │                  │
-│                                   │ llama3.2 │                  │
-│                                   └──────────┘                  │
-│                                         │                       │
-│                                      answer                     │
-│                                         │                       │
-│                                         ▼                       │
-│                                    END / stream                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-| Node | Input | What it does | Output |
-|---|---|---|---|
-| **reformulate** | `user_prompt` | Rewrites the raw user query into a precise search question using `reformulated_prompt.txt` | `reformulated_question` |
-| **retrieve** | `reformulated_question` | Queries Pinecone via sentence-transformer embeddings to fetch relevant property listings | `context` |
-| **generate** | `reformulated_question` + `context` + `history` | Calls the LLM with the system prompt, full conversation history, and retrieved context | `answer` + updated `history` |
-
-### Telegram Integration
-
-```
-Telegram User
-     │
-     │  message text
-     ▼
-MyTelegramAgent
-     │
-     │  ask(prompt, stream=True)
-     ▼
-LocalAgent
-     │
-     │  ask_stream(user_query)
-     ▼
-LlmModelGraph  ──▶  LangGraph pipeline (above)
-     │
-     │  token chunks (streamed)
-     ▼
-MyTelegramAgent  ──▶  edit_text() every 20 tokens
-     │
-     ▼
-Telegram User (live-updating message)
-```
-
-### Observability (LangSmith)
-
-```
-LlmModelGraph.ask() / ask_stream()
-         │
-         │  @traceable
-         ▼
-  LangSmith Trace
-  ├── reformulate  (LLM call)
-  ├── retrieve     (vector search)
-  └── generate     (LLM call + streamed tokens)
-```
-
-Traces are visible at [smith.langchain.com](https://smith.langchain.com) under the project `my-property-agent`.
+A conversational AI system for property search. Users describe what they're looking for in natural language and the agent retrieves relevant listings via a **LangGraph RAG pipeline** backed by a FAISS or Pinecone vector store. The system exposes multiple client interfaces — REST API, Streamlit web UI, Telegram bot, and a scheduled cron job — all built on a shared `BaseClient` interface.
 
 ---
 
-## Getting Started
+## Features
+
+- **LangGraph RAG Pipeline** — three-node graph: reformulate → retrieve → generate
+- **Streaming responses** — token-by-token output via SSE (REST) or live message edits (Telegram)
+- **Conversation memory** — in-memory history threaded through every graph invocation
+- **Multiple clients** — REST API, Streamlit UI, Telegram bot, scheduled cron job
+- **Pluggable vector store** — FAISS (local) or Pinecone (cloud), switched via config
+- **LangSmith observability** — every run traced with `@traceable`
+- **Web scraping** — ingest listings from URLs or CSV files
+- **87 tests** — TDD-style naming (`test_should_<result>_when_<condition>`) across all layers
+
+---
+
+## Architecture
+
+### Request flow
+
+```
+User (any client)
+  │
+  ▼
+LocalAgent.ask(prompt, stream)
+  │
+  ▼
+LlmModelGraph
+  ├── [reformulate]  user_prompt → reformulated_question   (LLM)
+  ├── [retrieve]     reformulated_question → context        (vector search)
+  └── [generate]     question + context + history → answer  (LLM)
+  │
+  ▼
+Response (blocking string or token stream)
+```
+
+### LangGraph pipeline (`agentP/src/model/llm_model_graph.py`)
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   LlmModelGraph                     │
+│                                                     │
+│   user_prompt                                       │
+│       │                                             │
+│       ▼                                             │
+│  ┌──────────┐   reformulated_question  ┌──────────┐ │
+│  │ REFORMU- │ ────────────────────────▶│ RETRIEVE │ │
+│  │   LATE   │                          │  (FAISS  │ │
+│  └──────────┘                          │ /Pinecone)│ │
+│                                        └──────────┘ │
+│                                             │       │
+│                                          context    │
+│                                             │       │
+│                                             ▼       │
+│                                       ┌──────────┐  │
+│                                       │ GENERATE │  │
+│                                       │ system   │  │
+│                                       │ prompt + │  │
+│                                       │ history  │  │
+│                                       │ + context│  │
+│                                       └──────────┘  │
+│                                             │       │
+│                                          answer     │
+└─────────────────────────────────────────────────────┘
+```
+
+### Client layer (`clients/`)
+
+All clients implement `BaseClient`:
+
+```python
+class BaseClient(ABC):
+    @abstractmethod
+    def start(self) -> None: ...  # blocks until stopped
+    def stop(self) -> None: ...   # graceful shutdown (override if needed)
+    # + context manager (__enter__ / __exit__)
+```
+
+| Client | Entry point | Transport |
+|---|---|---|
+| `RestClient` | `clients/rest/main.py` | FastAPI + SSE (port 8000) |
+| `StreamlitClient` | `clients/streamlit/main.py` | Streamlit web UI (port 8501) |
+| `TelegramClient` | `clients/telegram/main.py` | Telegram long-polling |
+| `CronClient` | `clients/cron/main.py` | Scheduled loop (every 30 min) |
+
+---
+
+## Repository structure
+
+```
+my-property-agent/
+├── agentP/
+│   ├── .env                         # Runtime config (see Configuration)
+│   ├── requirements.txt             # All Python dependencies
+│   ├── urls.txt                     # URLs for web scraping
+│   ├── src/
+│   │   ├── agent.py                 # LocalAgent — thin facade over LlmModelGraph
+│   │   ├── config/
+│   │   │   └── config.py            # Centralised settings loaded from .env
+│   │   ├── model/
+│   │   │   ├── llm_factory.py       # Creates the LLM (Ollama, OpenAI, …)
+│   │   │   ├── llm_model_graph.py   # LangGraph RAG pipeline
+│   │   │   ├── embedder.py          # SentenceTransformer embeddings
+│   │   │   ├── rag_context_manager.py  # Vector search → formatted context
+│   │   │   ├── context_builder.py   # Formats listing dicts as readable text
+│   │   │   └── session_manager.py   # SQLite-backed session history
+│   │   ├── persistence/
+│   │   │   ├── vector_store.py      # Abstract base (add / search)
+│   │   │   ├── factory.py           # Selects FAISS or Pinecone at runtime
+│   │   │   ├── faiss_store.py       # Local FAISS implementation
+│   │   │   └── pinecone_store.py    # Cloud Pinecone implementation
+│   │   ├── housing/
+│   │   │   ├── housing_data_collector.py   # Streams CSV → embeddings
+│   │   │   └── housing_csv_reader.py       # CSV parsing utility
+│   │   ├── gatherers/
+│   │   │   ├── data_collector.py           # Scrapes listing URLs
+│   │   │   └── pl_housing_data_collector.py # Polish housing ingestion
+│   │   ├── scraping/
+│   │   │   ├── web_scraper.py       # HTTP fetch + HTML cleanup
+│   │   │   ├── url_processor.py     # Regex-based listing extraction
+│   │   │   ├── scrape_se.py         # Selenium-based scraper
+│   │   │   └── utils.py             # Converts listings to LangChain Documents
+│   │   └── prompts/
+│   │       ├── System_Prompt.txt    # Agent persona and response style
+│   │       ├── reformulated_prompt.txt  # Query rewrite template
+│   │       └── interaction.json     # CLI interaction strings
+│   └── tests/
+│       ├── conftest.py              # sys.path fix + heavy-package stubs
+│       └── model/
+│           ├── test_embedder.py     # 17 tests
+│           └── test_llm_model_graph.py  # 22 tests
+│
+├── clients/
+│   ├── base.py                      # BaseClient ABC
+│   ├── rest/
+│   │   ├── main.py                  # FastAPI app + RestClient
+│   │   └── requirements.txt
+│   ├── streamlit/
+│   │   ├── main.py                  # Streamlit UI + StreamlitClient
+│   │   └── requirements.txt
+│   ├── telegram/
+│   │   ├── main.py                  # Telegram bot + TelegramClient
+│   │   └── requirements.txt
+│   ├── cron/
+│   │   ├── main.py                  # Scheduled search + CronClient
+│   │   └── requirements.txt
+│   └── tests/
+│       ├── conftest.py              # agentP.src.agent stub + third-party stubs
+│       ├── test_base_client.py      # 6 tests
+│       ├── test_rest_client.py      # 9 tests
+│       ├── test_cron_client.py      # 9 tests
+│       ├── test_telegram_client.py  # 9 tests
+│       └── test_streamlit_client.py # 9 tests (+ 4 _get_agent_response tests)
+│
+└── logs/
+    └── telegram_agent.log           # Telegram bot runtime log
+```
+
+---
+
+## Configuration
+
+All settings live in `agentP/.env`. Loaded automatically by `agentP/src/config/config.py`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `LLM_PROVIDER` | `ollama` | LLM backend (`ollama` is the only supported provider) |
+| `LLM_MODEL_NAME` | `llama3.2` | Ollama model name |
+| `LLM_TEMPERATURE` | `0.0` | Deterministic output |
+| `LLM_SEED` | `365` | Reproducibility seed |
+| `STORE_TYPE` | `pinecone` | `local` (FAISS) or `pinecone` |
+| `SENTENCE_TRANSFORMER_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
+| `PINECONE_API_KEY` | _(required for cloud)_ | Pinecone API key |
+| `PINECONE_INDEX_NAME` | `property-agent` | Pinecone index name |
+| `PROMPT_FILE` | `prompts/System_Prompt.txt` | Agent system prompt path |
+| `REFORMULATION_PROMPT` | `prompts/reformulated_prompt.txt` | Query rewrite template path |
+| `INTERACTION_FILE` | `prompts/interaction.json` | CLI interaction strings path |
+| `SESSION_DB_FILE` | `sessions.db` | SQLite file for chat session history |
+| `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | Token from [@BotFather](https://t.me/BotFather) |
+| `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header |
+| `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000)_ | Prompt used by the scheduled job |
+| `SBR_WEBDRIVER` | _(empty)_ | Selenium WebDriver URL for `scrape_se.py` |
+| `LANGCHAIN_TRACING_V2` | `false` | Set `true` to enable LangSmith tracing |
+| `LANGCHAIN_API_KEY` | _(empty)_ | LangSmith API key |
+| `LANGCHAIN_PROJECT` | `my-property-agent` | LangSmith project name |
+
+---
+
+## Getting started
 
 ### Prerequisites
 
-*   Python 3.10 or later
-*   [Ollama](https://ollama.ai/) installed and running
+- Python 3.10+
+- [Ollama](https://ollama.ai/) installed and running
+- Pinecone account (or set `STORE_TYPE=local` for offline FAISS)
 
 ### Installation
 
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/your-username/my-property-agent.git
-    cd my-property-agent
-    ```
-
-2.  Create and activate a virtual environment for `agentP` (recommended):
-    ```bash
-    cd agentP
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install -r requirements.txt
-    cd .. # Go back to project root
-    ```
-
-3.  Create and activate a virtual environment for `streamlit_app` (recommended):
-    ```bash
-    cd streamlit_app
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install -r requirements.txt
-    cd .. # Go back to project root
-    ```
-
-### Configuration
-
-1.  Create a `.env` file in the `agentP` directory (e.g., `agentP/.env`).
-
-2.  Modify the `agentP/.env` file to set your desired configuration. Key variables:
-
-    | Variable | Description |
-    |---|---|
-    | `LLM_PROVIDER` | LLM backend (e.g. `ollama`) |
-    | `LLM_MODEL_NAME` | Model name (e.g. `llama3.2`) |
-    | `PINECONE_API_KEY` | Pinecone API key for vector search |
-    | `PINECONE_INDEX_NAME` | Name of the Pinecone index |
-    | `TELEGRAM_BOT_TOKEN` | Token from [@BotFather](https://t.me/BotFather) |
-    | `LANGCHAIN_TRACING_V2` | Set `true` to enable LangSmith tracing |
-    | `LANGCHAIN_API_KEY` | API key from [smith.langchain.com](https://smith.langchain.com) |
-    | `LANGCHAIN_PROJECT` | LangSmith project name (default: `my-property-agent`) |
-
-3.  The Streamlit app's API URL is configured in `streamlit_app/config.py`.
-
-## Running the Agent
-
-### Running the Telegram Bot
-
 ```bash
-cd agentP
-uv sync
-uv run main.py
+git clone https://github.com/your-username/my-property-agent.git
+cd my-property-agent
+pip install -r agentP/requirements.txt
 ```
 
-The bot will start polling Telegram. Send any message to your bot — it will stream the response back token by token.
-
-### Running the Agent as a Standalone Script
-
-To start the agent as a standalone script (for testing or direct interaction), run the following command from the project root:
+Pull the LLM model:
 
 ```bash
-cd /Users/uzairkamal/work/my-property-agent
-# Activate agentP's venv if not already active
-# source agentP/venv/bin/activate
-PYTHONPATH=. python3 agentP/src/agent.py
+ollama pull llama3.2
 ```
 
-### Running the RESTful Service (Backend for Streamlit App)
-
-To run the agent as a RESTful service, which the Streamlit frontend will connect to, use the following command from the **project root**:
+Copy and edit the environment file:
 
 ```bash
-cd /Users/uzairkamal/work/my-property-agent
-# Activate agentP's venv
-# source agentP/venv/bin/activate
-uvicorn agentP.src.agentRest:app --host 0.0.0.0 --port 8000 --reload
+cp agentP/.env.example agentP/.env   # or edit agentP/.env directly
 ```
 
-The service will be available at `http://localhost:8000`. Keep this terminal window open and the server running.
+---
 
-### Running the Streamlit Frontend
+## Running the clients
 
-To run the interactive chat application:
+All commands are run from the **project root**.
 
-1.  **Ensure the `agentP` RESTful Service is running** (as described above).
-2.  Open a **new terminal window**.
-3.  Navigate to the `streamlit_app` directory:
-    ```bash
-    cd /Users/uzairkamal/work/my-property-agent/streamlit_app
-    ```
-4.  Activate the `streamlit_app`'s virtual environment:
-    ```bash
-    source venv/bin/activate
-    ```
-5.  Run the Streamlit application:
-    ```bash
-    streamlit run app.py
-    ```
-    This will open the Streamlit application in your web browser.
-
-For more detailed instructions on the Streamlit application, refer to `streamlit_app/README.md`.
-
-## API Usage (for the RESTful Service)
-
-You can interact with the service using `curl` or any other API client.
-
-**Example `curl` command:**
+### REST API
 
 ```bash
-curl "http://localhost:8000/ask?prompt=Hello"
+# Runs on http://localhost:8000
+python -m clients.rest.main
+# or equivalently:
+uvicorn clients.rest.main:app --host 0.0.0.0 --port 8000
 ```
 
-**Streaming Example:**
+**Endpoints:**
+
+| Method | Path | Params | Response |
+|---|---|---|---|
+| GET | `/ask` | `prompt` (str), `stream` (bool) | `{"response": str}` or SSE stream |
 
 ```bash
-curl "http://localhost:8000/ask?prompt=Hello&stream=True"
+# Blocking
+curl "http://localhost:8000/ask?prompt=3+bed+Warsaw"
+
+# Streaming (SSE)
+curl "http://localhost:8000/ask?prompt=3+bed+Warsaw&stream=true"
 ```
+
+When `API_KEY` is set in `.env`, every request must include `X-API-Key: <key>`.
+
+### Streamlit UI
+
+Requires the REST API to be running first.
+
+```bash
+streamlit run clients/streamlit/main.py
+# Opens at http://localhost:8501
+```
+
+Or via the client interface:
+
+```bash
+python -c "from clients.streamlit.main import StreamlitClient; StreamlitClient().start()"
+```
+
+### Telegram bot
+
+```bash
+python -m clients.telegram.main
+```
+
+Set `TELEGRAM_BOT_TOKEN` in `agentP/.env` before starting. The bot streams the property agent's response back to the user, editing the message every 20 tokens.
+
+### Cron job (scheduled search)
+
+```bash
+python -m clients.cron.main
+# Runs the configured CRON_SEARCH_PROMPT every 30 minutes
+```
+
+### CLI (interactive)
+
+```bash
+PYTHONPATH=. python agentP/src/agent.py
+```
+
+---
+
+## Data ingestion
+
+### Ingest Polish housing CSV data
+
+Place CSV files in `agentP/datasets/pl-housing/`, then:
+
+```bash
+python -m agentP.src.gatherers.pl_housing_data_collector
+```
+
+### Ingest from URLs
+
+Add URLs to `agentP/urls.txt` (one per line), then run the data collector:
+
+```bash
+python -m agentP.src.gatherers.data_collector
+```
+
+---
 
 ## Testing
 
-To run the tests for the `agentP` module, navigate to the `agentP` directory and use pytest:
-
 ```bash
-cd agentP
-pytest
+# All tests (87 total)
+python -m pytest agentP/tests/ clients/tests/ -v
+
+# agentP core only (39 tests)
+python -m pytest agentP/tests/ -v
+
+# Client layer only (48 tests)
+python -m pytest clients/tests/ -v
+
+# With coverage
+python -m pytest agentP/tests/ clients/tests/ --cov=agentP/src --cov=clients --cov-report=term-missing
 ```
 
-## Project Structure
+All external dependencies (LLM, vector store, network, Telegram, FastAPI) are mocked. No real services are required to run the test suite.
 
+---
+
+## LangSmith observability
+
+Set the following in `agentP/.env` to enable tracing:
+
+```env
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=<your-key>
+LANGCHAIN_PROJECT=my-property-agent
 ```
-.
-├── README.md                        <- This file
-├── agentP/
-│   ├── main.py                      <- Entry point — starts the Telegram bot
-│   ├── pyproject.toml               <- Python dependencies (uv)
-│   ├── .env                         <- Environment variables
-│   ├── prompts/
-│   │   ├── System_Prompt.txt        <- LLM system prompt
-│   │   ├── reformulated_prompt.txt  <- Prompt used by the reformulate node
-│   │   └── interaction.json         <- CLI interaction strings
-│   └── src/
-│       ├── agent.py                 <- LocalAgent — thin wrapper over the graph
-│       ├── telegram_agent.py        <- MyTelegramAgent — Telegram bot interface
-│       ├── config/
-│       │   └── config.py            <- Centralised config from .env
-│       └── model/
-│           ├── llm_factory.py       <- Creates the LLM (Ollama, etc.)
-│           ├── llm_model_graph.py   <- LangGraph RAG pipeline (reformulate → retrieve → generate)
-│           ├── embedder.py          <- Sentence-transformer embeddings
-│           ├── rag_context_manager.py <- Pinecone vector search
-│           └── session_manager.py   <- Conversation history store
-├── streamlit_app/                   <- Streamlit frontend
-│   ├── app.py
-│   ├── config.py
-│   └── README.md
-└── ... (.gitignore, .idea, etc.)
-```
+
+Every `ask()` and `ask_stream()` call is decorated with `@traceable` and produces a trace with three child spans — `reformulate`, `retrieve`, and `generate` — visible at [smith.langchain.com](https://smith.langchain.com).
+
+---
 
 ## Contributing
 
-Contributions are welcome! Please feel free to open an issue or submit a pull request.
+Contributions are welcome. Please open an issue or submit a pull request.
