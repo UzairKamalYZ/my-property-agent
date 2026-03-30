@@ -78,5 +78,7 @@ class StreamlitClient(BaseClient):
         )
 
 
-# Executed by `streamlit run clients/streamlit/app.py`
-_run_ui()
+# Executed by `streamlit run clients/streamlit/main.py`
+# __name__ is "__main__" both when Streamlit runs the script and on every rerun.
+if __name__ == "__main__":
+    _run_ui()
