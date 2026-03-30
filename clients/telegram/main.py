@@ -14,8 +14,8 @@ WAITING_JOKES = [
     "What's a real estate agent's favourite type of music? House!",
 ]
 
-from agent import LocalAgent
-from config.config import Config
+from agentP.src.agent import LocalAgent
+from agentP.src.config.config import Config
 
 LOG_FILE = "logs/telegram_agent.log"
 os.makedirs("logs", exist_ok=True)

@@ -1,10 +1,9 @@
-import uuid
 import json
 from rich.console import Console
 
 from config.config import Config
 from model.llm_factory import create_llm
-from model.llm_model import LlmModel
+from model.llm_model_graph import LlmModelGraph
 from scraping.web_scraper import WebScraper
 
 
@@ -17,9 +16,8 @@ class LocalAgent:
             provider=Config.LLM_PROVIDER,
             model_name=Config.LLM_MODEL_NAME
         )
-        self.model = LlmModel(llm)
+        self.model = LlmModelGraph(llm)
         self.web_scraper = WebScraper()
-        self.session_id = str(uuid.uuid4())
         with open(Config.INTERACTION_FILE, "r") as f:
             self.interaction_texts = json.load(f)
 
@@ -27,9 +25,9 @@ class LocalAgent:
         """
         Asks the model a question using the full RAG and reformulation pipeline.
         """
-        with open(Config.PROMPT_FILE, "r") as f:
-            system_prompt = f.read()
-        return self.model.ask(system_prompt, prompt, self.session_id, stream=stream)
+        if stream:
+            return self.model.ask_stream(prompt)
+        return self.model.ask(prompt)
 
     def __enter__(self):
         return self

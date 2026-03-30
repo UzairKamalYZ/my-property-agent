@@ -19,28 +19,26 @@ async def verify_api_key(api_key: str = Security(API_KEY_HEADER)):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     agent = LocalAgent()
-    app.state.agent = agent  # store agent in app state
+    app.state.agent = agent
     print("✅ Agent started.")
-
-    yield  # <--- everything before this runs at startup, after runs at shutdown
-
-    # Shutdown
+    yield
     agent.close()
     print("🧹 Agent closed successfully.")
 
+
 app = FastAPI(lifespan=lifespan)
+
 
 async def sse_formatter(stream):
     """Formats a generator of strings into Server-Sent Events."""
     try:
         for chunk in stream:
             yield f"data: {chunk}\n\n"
-            await asyncio.sleep(0.01)  # Small delay to allow client to process
+            await asyncio.sleep(0.01)
     except asyncio.CancelledError:
-        # This is expected if the client disconnects
         print("Client disconnected.")
+
 
 @app.get("/ask")
 async def ask(prompt: str, stream: bool = False, _: None = Depends(verify_api_key)):
