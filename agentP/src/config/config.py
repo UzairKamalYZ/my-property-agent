@@ -16,10 +16,22 @@ class Config:
     PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
     PINECONE_ENVIRONMENT = os.getenv("PINECONE_ENVIRONMENT")
     PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
-    PROMPT_FILE = os.path.join( os.getenv("PROMPT_FILE"))
+    PROMPT_FILE = os.path.join(os.getenv("PROMPT_FILE"))
     INTERACTION_FILE = os.path.join(os.getenv("INTERACTION_FILE"))
     REFORMULATION_PROMPT = os.path.join(os.getenv("REFORMULATION_PROMPT"))
+    # Telegram / LangSmith integrations
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false")
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "my-property-agent")
+    # API security — leave empty to disable auth
+    API_KEY = os.getenv("API_KEY", "")
+    # Cron job search prompt
+    CRON_SEARCH_PROMPT = os.getenv(
+        "CRON_SEARCH_PROMPT",
+        "Give me a list of 2 bed apartment in poland with price less than 1000.",
+    )
+    # SQLite file for persistent session history
+    SESSION_DB_FILE = os.getenv("SESSION_DB_FILE", "sessions.db")
+    # Selenium scraping browser connection string
+    SBR_WEBDRIVER = os.getenv("SBR_WEBDRIVER", "")

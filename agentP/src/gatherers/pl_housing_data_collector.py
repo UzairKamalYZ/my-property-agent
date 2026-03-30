@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from agentP.src.housing.housing_data_collector import housing_data_collector
+from agentP.src.housing.housing_data_collector import HousingDataCollector
 
 if __name__ == "__main__":
-    with (housing_data_collector() as collector):
+    with (HousingDataCollector() as collector):
         BATCH_SIZE = 100
         documents = {}
 

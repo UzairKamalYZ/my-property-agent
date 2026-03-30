@@ -76,10 +76,15 @@ class UrlProcessor:
 
 
     def _extract_city(self, text: str) -> str:
-        # Extend this list as needed
         cities = [
-            "brussels", "antwerp", "ghent", "bruges",
-            "leuven", "liège", "namur"
+            # Belgium
+            "brussels", "antwerp", "ghent", "bruges", "leuven", "liège", "namur",
+            # Poland
+            "warsaw", "kraków", "krakow", "łódź", "lodz", "wrocław", "wroclaw",
+            "poznań", "poznan", "gdańsk", "gdansk", "szczecin", "bydgoszcz",
+            "lublin", "białystok", "bialystok", "katowice", "gdynia", "częstochowa",
+            "radom", "sosnowiec", "toruń", "torun", "kielce", "rzeszów", "rzeszow",
+            "gliwice", "zabrze", "olsztyn", "bytom", "bielsko-biała", "bielsko-biala",
         ]
 
         text_lower = text.lower()

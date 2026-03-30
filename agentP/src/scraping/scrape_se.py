@@ -6,7 +6,7 @@ import os
 
 load_dotenv()
 
-SBR_WEBDRIVER = os.getenv()
+SBR_WEBDRIVER = os.getenv("SBR_WEBDRIVER")
 
 
 def scrape_website(website):

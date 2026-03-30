@@ -31,15 +31,19 @@ class LlmModel:
     # ------------------- Public Methods -------------------
     def ask(self, system_prompt: str, user_query: str, session_id: str, stream=False):
         """Invokes the full RAG chain which includes prompt reformulation."""
+        return self.ask_with_reformulation(user_query, session_id, stream=stream)
 
+    def ask_direct(self, user_prompt: str, session_id: str) -> str:
+        """Invokes the direct chain (no RAG, no reformulation)."""
         config = {"configurable": {"session_id": session_id}}
+        return self.direct_chain_with_history.invoke({"input": user_prompt}, config=config)
 
-        input_for_full_chain = {"user_prompt": user_query}
-
+    def ask_with_reformulation(self, user_prompt: str, session_id: str, stream=False):
+        """Invokes the full RAG chain with query reformulation."""
+        config = {"configurable": {"session_id": session_id}}
         if stream:
-            return self.full_chain.stream(input_for_full_chain, config)
-        else:
-            return self.full_chain.invoke(input_for_full_chain, config)
+            return self.full_chain.stream(user_prompt, config=config)
+        return self.full_chain.invoke(user_prompt, config=config)
 
     # ------------------- Private Chain Builders -------------------
 
@@ -77,12 +81,11 @@ class LlmModel:
         )
 
     def _build_full_chain(self) -> RunnableWithMessageHistory:
-        # This is the final chain the user requested: formulated-prompt | ask again
-        # It takes a "user_prompt", reformulates it, and pipes the result to the RAG chain.
-        # We add a lambda to reshape the string output from the first chain into a
-        # dictionary for the second chain.
+        # Accepts a raw string, wraps it for the reformulation chain, then pipes
+        # the reformulated string into the RAG chain.
         return (
-            self.reformulation_chain
+            RunnableLambda(lambda x: {"user_prompt": x})
+            | self.reformulation_chain
             | RunnableLambda(lambda x: {"question": x})
             | self.rag_chain_with_history
         )

@@ -1,7 +1,8 @@
 import time
 
+from agentP.src.agent import LocalAgent
+from agentP.src.config.config import Config
 
-from agent import LocalAgent
 
 def run_cron_job():
     """
@@ -9,11 +10,8 @@ def run_cron_job():
     """
     print(f"[{time.ctime()}] Starting cron job...")
     try:
-        # LocalAgent manages its own session, so a new instance per job is okay
-        # or we can pass a session_id to maintain conversation state if needed.
-        # For a single prompt, a new instance is simplest.
         with LocalAgent() as agent:
-            prompt = "Give me a list of 2 bed apartment in poland with price less than 1000."
+            prompt = Config.CRON_SEARCH_PROMPT
             print(f"[{time.ctime()}] Asking agent: '{prompt}'")
             response = agent.ask(prompt)
             print(f"[{time.ctime()}] Agent response:{response}")

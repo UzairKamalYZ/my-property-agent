@@ -1,17 +1,20 @@
-from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_community.chat_message_histories import SQLChatMessageHistory
+
+from agentP.src.config.config import Config
 
 
 class SessionManager:
-    """Manages in-memory session history for chat interactions."""
+    """Manages persistent session history for chat interactions backed by SQLite."""
 
     def __init__(self):
-        self.store = {}
+        self._db_url = f"sqlite:///{Config.SESSION_DB_FILE}"
 
-    def get_session_history(self, session_id: str) -> InMemoryChatMessageHistory:
+    def get_session_history(self, session_id: str) -> SQLChatMessageHistory:
         """
-        Retrieves the message history for a given session, creating it
-        if it doesn't exist.
+        Retrieves the message history for a given session.
+        History is persisted to SQLite and survives process restarts.
         """
-        if session_id not in self.store:
-            self.store[session_id] = InMemoryChatMessageHistory()
-        return self.store[session_id]
+        return SQLChatMessageHistory(
+            session_id=session_id,
+            connection=self._db_url,
+        )

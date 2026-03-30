@@ -88,11 +88,14 @@ User (Streamlit UI / curl)
 | `rag_chain_with_history` | RAG-augmented answer using retrieved listings + history |
 | `full_chain` | **Default** — reformulation → RAG chain |
 
-**Only public method:** `LlmModel.ask(system_prompt, user_query, session_id, stream=False)`
+**Public methods:**
+- `ask(system_prompt, user_query, session_id, stream=False)` — delegates to `ask_with_reformulation`
+- `ask_direct(user_prompt, session_id) -> str` — direct chain only (no RAG)
+- `ask_with_reformulation(user_prompt, session_id, stream=False)` — full RAG pipeline
 
-The full chain composition uses the `|` operator:
+`full_chain` accepts a raw string; it wraps it internally before passing to the reformulation chain:
 ```python
-full_chain = reformulation_chain | (lambda x: {"question": x}) | rag_chain_with_history
+full_chain = RunnableLambda(lambda x: {"user_prompt": x}) | reformulation_chain | RunnableLambda(lambda x: {"question": x}) | rag_chain_with_history
 ```
 
 ### Vector Store Backends (`persistence/`)
@@ -116,9 +119,8 @@ full_chain = reformulation_chain | (lambda x: {"question": x}) | rag_chain_with_
 
 ### Session Management (`session_manager.py`)
 
-- `SessionManager.get_session_history(session_id: str)` returns an `InMemoryChatMessageHistory`.
-- Sessions are keyed by UUID, stored in a plain dict.
-- **History is RAM-only** — lost on process restart. No persistent storage exists yet.
+- `SessionManager.get_session_history(session_id: str)` returns a `SQLChatMessageHistory` backed by SQLite.
+- History is stored in the file pointed to by `SESSION_DB_FILE` (default `sessions.db`) and **survives process restarts**.
 - LangChain's `RunnableWithMessageHistory` wraps chains and injects history automatically.
 
 ### Context Building (`context_builder.py`)
@@ -158,10 +160,14 @@ All configuration lives in `agentP/.env`. Loaded via `Config` in `agentP/src/con
 | `URLS_FILE` | `../urls.txt` | URLs for web scraping (relative to launch dir) |
 | `PINECONE_API_KEY` | _(required for cloud)_ | Pinecone API key |
 | `PINECONE_ENVIRONMENT` | `gcpstart` | Pinecone environment |
-| `PINECONE_INDEX_NAME` | `course-ai` | Pinecone index name |
+| `PINECONE_INDEX_NAME` | `property-agent` | Pinecone index name |
 | `PROMPT_FILE` | `agentP/prompts/System_Prompt.txt` | Agent system prompt path |
 | `INTERACTION_FILE` | `agentP/prompts/interaction.json` | CLI interaction messages |
 | `REFORMULATION_PROMPT` | `agentP/prompts/reformulated_prompt.txt` | Query reformulation template |
+| `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header auth |
+| `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000)_ | Prompt used by the scheduled cron job |
+| `SESSION_DB_FILE` | `sessions.db` | SQLite file for persistent chat session history |
+| `SBR_WEBDRIVER` | _(empty)_ | Selenium scraping browser WebDriver URL (`scrape_se.py`) |
 
 ---
 
@@ -235,6 +241,8 @@ All external dependencies (LLM, vector store, HTTP) must be mocked. Do not write
 
 **Streaming format** (SSE): Each chunk is sent as `data: {chunk}\n\n` with a 0.01 s inter-chunk delay.
 
+**Authentication**: When `API_KEY` is set in `.env`, all requests must include the header `X-API-Key: <key>`. Leave `API_KEY` empty to disable authentication (default for local development).
+
 ---
 
 ## Code Conventions
@@ -245,7 +253,7 @@ All external dependencies (LLM, vector store, HTTP) must be mocked. Do not write
 - Class-based design; no top-level procedural logic in modules.
 - Private methods prefixed with `_` (e.g., `_build_chains()`, `_initialize_components()`).
 - Config values always accessed through `Config` in `config.py` — never hardcode paths or keys.
-- Context managers (`__enter__`/`__exit__`/`close()`) used for resource-owning classes (`LocalAgent`, `housing_data_collector`).
+- Context managers (`__enter__`/`__exit__`/`close()`) used for resource-owning classes (`LocalAgent`, `HousingDataCollector`).
 
 ### Adding a New LLM Provider
 
@@ -267,9 +275,10 @@ All external dependencies (LLM, vector store, HTTP) must be mocked. Do not write
 
 ### Data Ingestion
 
-- CSV files are streamed row-by-row via `housing_data_collector.stream_csv_files()` in configurable chunks (default 5 000 rows) to avoid memory pressure.
+- CSV files are streamed row-by-row via `HousingDataCollector.stream_csv_files()` in configurable chunks (default 5 000 rows) to avoid memory pressure.
 - Each row is converted to an embedding-ready text block by `generateEmbededDocument()`.
 - `pl_housing_data_collector.py` persists in batches of 100 documents.
+- `housing_csv_reader.py` provides the standalone `stream_csv_files()` utility function.
 - Web-scraped content is chunked into 6 000-character segments before embedding.
 
 ---
@@ -283,37 +292,11 @@ All external dependencies (LLM, vector store, HTTP) must be mocked. Do not write
 
 ---
 
-## Known Issues & Limitations
+## Known Limitations
 
-### Critical
-
-1. **Test/implementation mismatch** (`tests/model/test_llm_model.py`): Tests call `ask_direct()` and `ask_with_reformulation()` which do not exist. `LlmModel` only exposes `ask()`. Tests will fail without fixes.
-
-2. **Broken import in cron job** (`cron_agent.py:4`): Uses `from agent import LocalAgent` (relative) — fails when run from any directory other than `agentP/src/`. Should be an absolute/package import.
-
-3. **`os.getenv()` called without argument** (`scraping/scrape_se.py:9`): Returns `None`; likely should be `os.getenv("SBR_WEBDRIVER")` or equivalent.
-
-4. **`housing_csv_reader.py` is incomplete**: The file contains only a single character (`d`). `stream_csv_files()` is implemented directly in `housing_data_collector.py`.
-
-### Major
-
-5. **No authentication on REST API**: `/ask` endpoint is unauthenticated and accepts arbitrary prompts.
-
-6. **Session history not persistent**: `InMemoryChatMessageHistory` is lost on server restart. There is no database-backed persistence layer.
-
-7. **Hardcoded cron prompt** (`cron_agent.py:16`): Search query is a hardcoded string; should be configurable.
-
-8. **Belgium-centric city extraction** (`url_processor.py`): `_extract_city()` checks against a hardcoded Belgian city list (Brussels, Antwerp, Bruges) while the main data pipeline targets Polish housing data.
-
-9. **PEP 8 naming** (`housing_data_collector.py`): Class name `housing_data_collector` should be `HousingDataCollector`.
-
-### Minor
-
-10. **Relative path sensitivity** (`.env:URLS_FILE=../urls.txt`): Breaks if the process is not launched from `agentP/src/`.
-
-11. **`PINECONE_INDEX_NAME=course-ai`**: Suggests a course/prototype origin; rename before any production use.
-
-12. **Dunder-named public methods** (`data_collector.py`): `__getDataFromUrls__` and `__storVectorEmbeddings__` (also a typo — "stor" vs "store") use double-underscore naming but are meant to be called externally.
+- **`.env` path sensitivity**: `PROMPT_FILE`, `URLS_FILE`, etc. are relative to where the process is launched. Always run the backend from `agentP/src/`, or use absolute paths.
+- **No Streamlit API key support**: The Streamlit UI (`streamlit_app/app.py`) does not send the `X-API-Key` header, so enabling `API_KEY` will break the web frontend unless the UI is updated to pass the header.
+- **Ollama must be running**: The backend calls the Ollama HTTP API at startup. `SBR_WEBDRIVER` must also be set to use `scrape_se.py`.
 
 ---
 
@@ -337,5 +320,5 @@ All external dependencies (LLM, vector store, HTTP) must be mocked. Do not write
 - **Pinecone vs FAISS**: Set `STORE_TYPE=local` for offline/local development; `pinecone` requires a valid `PINECONE_API_KEY` and network access.
 - **Ollama must be running**: The backend calls the Ollama HTTP API at startup. Run `ollama pull qwen3:8b` and ensure the daemon is active before starting.
 - **Streaming**: The `/ask` endpoint uses Server-Sent Events (SSE). Pass `stream=true` as a query param to enable it. The Streamlit app connects to the non-streaming endpoint by default.
-- **Session memory is ephemeral**: Chat history lives in RAM and is lost on process restart.
-- **Test suite**: `test_llm_model.py` currently fails because it references non-existent methods. Fix method names before running the test suite.
+- **Session persistence**: Chat history is stored in `SESSION_DB_FILE` (SQLite). The file is created automatically on first run.
+- **API key auth**: `API_KEY` is empty by default (auth disabled). Set it in `.env` to enforce `X-API-Key` header checks — but note the Streamlit UI does not send this header.

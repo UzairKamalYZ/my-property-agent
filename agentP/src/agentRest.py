@@ -1,9 +1,21 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, Security
+from fastapi.security import APIKeyHeader
 from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse
 import asyncio
 
 from agentP.src.agent import LocalAgent
+from agentP.src.config.config import Config
+
+API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_api_key(api_key: str = Security(API_KEY_HEADER)):
+    """Validates the API key header when API_KEY is configured."""
+    expected = Config.API_KEY
+    if expected and api_key != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,7 +43,7 @@ async def sse_formatter(stream):
         print("Client disconnected.")
 
 @app.get("/ask")
-async def ask(prompt: str, stream: bool = False):
+async def ask(prompt: str, stream: bool = False, _: None = Depends(verify_api_key)):
     """Endpoint to ask the agent a question."""
     agent = app.state.agent
     if stream:

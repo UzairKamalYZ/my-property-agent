@@ -5,7 +5,7 @@ import pandas as pd
 from agentP.src.model.embedder import Embedder
 
 
-class housing_data_collector:
+class HousingDataCollector:
     def __init__(self):
         self.embedder = Embedder()
 
