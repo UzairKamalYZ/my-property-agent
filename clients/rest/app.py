@@ -1,11 +1,14 @@
-from fastapi import FastAPI, Depends, HTTPException, Security
-from fastapi.security import APIKeyHeader
-from contextlib import asynccontextmanager
-from fastapi.responses import StreamingResponse
 import asyncio
+from contextlib import asynccontextmanager
+
+import uvicorn
+from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi.responses import StreamingResponse
+from fastapi.security import APIKeyHeader
 
 from agentP.src.agent import LocalAgent
 from agentP.src.config.config import Config
+from clients.base import BaseClient
 
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -45,8 +48,23 @@ async def ask(prompt: str, stream: bool = False, _: None = Depends(verify_api_ke
     """Endpoint to ask the agent a question."""
     agent = app.state.agent
     if stream:
-        response_stream = agent.ask(prompt, stream=True)
-        return StreamingResponse(sse_formatter(response_stream), media_type="text/event-stream")
-    else:
-        response = agent.ask(prompt, stream=False)
-        return {"response": response}
+        return StreamingResponse(
+            sse_formatter(agent.ask(prompt, stream=True)),
+            media_type="text/event-stream",
+        )
+    return {"response": agent.ask(prompt, stream=False)}
+
+
+class RestClient(BaseClient):
+    """Serves the property-agent REST API via uvicorn."""
+
+    def __init__(self, host: str = "0.0.0.0", port: int = 8000):
+        self.host = host
+        self.port = port
+
+    def start(self) -> None:
+        uvicorn.run(app, host=self.host, port=self.port)
+
+
+if __name__ == "__main__":
+    RestClient().start()

@@ -1,8 +1,13 @@
 import logging
 import os
 import random
+
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+
+from agentP.src.agent import LocalAgent
+from agentP.src.config.config import Config
+from clients.base import BaseClient
 
 WAITING_JOKES = [
     "Why did the scarecrow win an award? Because he was outstanding in his field — much like your future home!",
@@ -13,9 +18,6 @@ WAITING_JOKES = [
     "Why don't houses ever get lonely? Because they're always in a good neighbourhood.",
     "What's a real estate agent's favourite type of music? House!",
 ]
-
-from agentP.src.agent import LocalAgent
-from agentP.src.config.config import Config
 
 LOG_FILE = "logs/telegram_agent.log"
 os.makedirs("logs", exist_ok=True)
@@ -31,8 +33,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class MyTelegramAgent:
-    """Telegram bot that forwards user messages to LocalAgent and replies with the response."""
+class _Bot:
+    """Internal Telegram bot logic wired to LocalAgent."""
 
     def __init__(self):
         self.local_agent = LocalAgent()
@@ -62,12 +64,10 @@ class MyTelegramAgent:
             for token in self.local_agent.ask(user_text, stream=True):
                 accumulated += token
                 chunk_count += 1
-                # Edit message every 20 tokens to avoid Telegram rate limits
                 if chunk_count % 20 == 0 and accumulated != last_sent:
                     await sent.edit_text(accumulated)
                     last_sent = accumulated
 
-            # Send the final complete response
             if accumulated and accumulated != last_sent:
                 await sent.edit_text(accumulated)
             elif not accumulated:
@@ -78,10 +78,19 @@ class MyTelegramAgent:
             await sent.edit_text("Sorry, something went wrong. Please try again.")
 
     def run(self):
-        logger.info("Starting Telegram bot...")
         self.app.run_polling()
 
 
+class TelegramClient(BaseClient):
+    """Runs the Telegram bot via long-polling."""
+
+    def __init__(self):
+        self._bot = _Bot()
+
+    def start(self) -> None:
+        logger.info("Starting Telegram client...")
+        self._bot.run()
+
+
 if __name__ == "__main__":
-    bot = MyTelegramAgent()
-    bot.run()
+    TelegramClient().start()
