@@ -1,5 +1,8 @@
+import logging
 from agentP.src.model.embedder import Embedder
 from agentP.src.model.context_builder import build_context_from_listings
+
+logger = logging.getLogger(__name__)
 
 
 class RagContextManager:
@@ -13,5 +16,9 @@ class RagContextManager:
         Retrieves relevant listings based on a user prompt and builds a
         formatted context string.
         """
+        logger.debug("Retrieving context: query=%r k=%d", user_prompt, k)
         listings = self.embedder.search(user_prompt, k=k)
+        count = len(listings) if listings else 0
+        logger.info("Context retrieved: %d listing(s) for query_len=%d",
+                    count, len(user_prompt))
         return build_context_from_listings(listings)

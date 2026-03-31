@@ -1,5 +1,8 @@
+import logging
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 
 class WebScraper:
@@ -7,21 +10,24 @@ class WebScraper:
 
     def scrape(self, url: str) -> str:
         """Fetch and parse the text content of a URL."""
+        logger.info("Scraping URL: %s", url)
         try:
             response = requests.get(url, timeout=15)
             response.raise_for_status()
+            logger.debug("Response: status=%d bytes=%d url=%s",
+                         response.status_code, len(response.content), url)
 
             soup = BeautifulSoup(response.content, "html.parser")
-
             body_html = self.extract_body_content(soup)
             cleaned_content = self.clean_body_content(body_html)
             split_content = self.split_dom_content(cleaned_content)
 
+            logger.debug("Scrape complete: %d chunk(s) from %s",
+                         len(split_content), url)
             return "\n".join(split_content)
 
-
         except requests.exceptions.RequestException as e:
-            print(f"Error fetching URL {url}: {e}")
+            logger.error("Request failed for %s: %s", url, e)
             return ""
 
     def extract_body_content(self, soup: BeautifulSoup) -> str:

@@ -1,7 +1,10 @@
+import logging
 from langchain_core.language_models import BaseLanguageModel
 from langchain_ollama import OllamaLLM as Ollama
 
 from agentP.src.config.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 def create_llm(provider: str, model_name: str) -> BaseLanguageModel:
@@ -13,14 +16,16 @@ def create_llm(provider: str, model_name: str) -> BaseLanguageModel:
     :return: An instance of a LangChain BaseLanguageModel.
     :raises ValueError: If the provider is not supported.
     """
+    logger.info("Creating LLM provider=%s model=%s", provider, model_name)
     if provider == "ollama":
-        return Ollama(
+        llm = Ollama(
             model=model_name,
             seed=Config.LLM_SEED,
             temperature=Config.LLM_TEMPERATURE
         )
-    # Add other providers here in the future, e.g.:
-    # elif provider == "openai":
-    #     return OpenAI(...)
+        logger.debug("Ollama LLM created model=%s seed=%s temperature=%s",
+                     model_name, Config.LLM_SEED, Config.LLM_TEMPERATURE)
+        return llm
     else:
+        logger.error("Unsupported LLM provider: %s", provider)
         raise ValueError(f"Unsupported LLM provider: {provider}")
