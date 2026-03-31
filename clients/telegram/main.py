@@ -1,5 +1,4 @@
 import logging
-import os
 import random
 
 from telegram import Update
@@ -8,6 +7,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 from agentP.src.agent import LocalAgent
 from agentP.src.config.config import Config
 from clients.base import BaseClient
+from logging_config import setup_logging
+
+setup_logging()
 
 WAITING_JOKES = [
     "Why did the scarecrow win an award? Because he was outstanding in his field — much like your future home!",
@@ -19,22 +21,10 @@ WAITING_JOKES = [
     "What's a real estate agent's favourite type of music? House!",
 ]
 
-LOG_FILE = "logs/telegram_agent.log"
-os.makedirs("logs", exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-    ],
-)
 logger = logging.getLogger(__name__)
 
 
 class _Bot:
-    """Internal Telegram bot logic wired to LocalAgent."""
 
     def __init__(self):
         self.local_agent = LocalAgent()

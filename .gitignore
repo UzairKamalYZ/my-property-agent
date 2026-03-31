@@ -1,4 +1,27 @@
+# Virtual environments
 venv/
-.DS_Store
-__pycache__
+.venv/
+
+# Environment variables
+.env
+
+# Logs
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Data
 pl-housing
+
+# OS
+.DS_Store
+
+package-lock.json
+.coverage
+# IDE
+.idea/
+/package-lock.json
+node_modules/

@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@openbnb/mcp-server-airbnb": "^0.1.3"
+  }
+}

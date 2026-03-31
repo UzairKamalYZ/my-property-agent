@@ -1,0 +1,43 @@
+[project]
+name = "my-property-agent"
+version = "0.1.0"
+description = "Conversational AI system for property search using RAG and LangGraph"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    # LangChain / LangGraph
+    "langchain>=1.0.3",
+    "langchain-core>=1.0.2",
+    "langchain-ollama>=1.0.0",
+    "langchain-community>=0.4.1",
+    "langgraph>=1.0.2",
+    "langsmith>=0.4.39",
+    # Vector stores & embeddings
+    "faiss-cpu>=1.13.2",
+    "pinecone>=8.1.0",
+    "sentence-transformers>=5.3.0",
+    # Clients
+    "python-telegram-bot>=21.0",
+    "fastapi>=0.120.4",
+    "uvicorn>=0.38.0",
+    "streamlit>=1.0.0",
+    # Data
+    "pandas>=2.0.0",
+    "numpy>=2.3.0",
+    "SQLAlchemy>=2.0.0",
+    # Scraping
+    "beautifulsoup4>=4.12.3",
+    "selenium>=4.11.2",
+    "requests>=2.32.5",
+    # Utilities
+    "python-dotenv>=1.2.2",
+    "rich>=14.3.0",
+    "pydantic>=2.12.0",
+    "pydantic-settings>=2.11.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+]

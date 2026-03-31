@@ -1,7 +1,9 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Always load from the project root .env, regardless of where the process is launched
+load_dotenv(Path(__file__).parents[3] / ".env")
 
 class Config:
     """Configuration class for the application."""
@@ -26,11 +28,7 @@ class Config:
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "my-property-agent")
     # API security — leave empty to disable auth
     API_KEY = os.getenv("API_KEY", "")
-    # Cron job search prompt
-    CRON_SEARCH_PROMPT = os.getenv(
-        "CRON_SEARCH_PROMPT",
-        "Give me a list of 2 bed apartment in poland with price less than 1000.",
-    )
+
     # SQLite file for persistent session history
     SESSION_DB_FILE = os.getenv("SESSION_DB_FILE", "sessions.db")
     # Selenium scraping browser connection string

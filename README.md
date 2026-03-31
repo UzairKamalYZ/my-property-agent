@@ -92,9 +92,11 @@ class BaseClient(ABC):
 
 ```
 my-property-agent/
+├── .env                             # Runtime config (see Configuration)
+├── pyproject.toml                   # Project metadata and dependencies
+├── logging_config.py                # Central logging setup (logs/agent.log)
 ├── agentP/
-│   ├── .env                         # Runtime config (see Configuration)
-│   ├── requirements.txt             # All Python dependencies
+│   ├── requirements.txt             # Pinned dependency lockfile
 │   ├── urls.txt                     # URLs for web scraping
 │   ├── src/
 │   │   ├── agent.py                 # LocalAgent — thin facade over LlmModelGraph
@@ -124,9 +126,9 @@ my-property-agent/
 │   │   │   ├── scrape_se.py         # Selenium-based scraper
 │   │   │   └── utils.py             # Converts listings to LangChain Documents
 │   │   └── prompts/
-│   │       ├── System_Prompt.txt    # Agent persona and response style
+│   │       ├── System_Prompt.txt        # Agent persona and response style
 │   │       ├── reformulated_prompt.txt  # Query rewrite template
-│   │       └── interaction.json     # CLI interaction strings
+│   │       └── interaction.json         # CLI interaction strings
 │   └── tests/
 │       ├── conftest.py              # sys.path fix + heavy-package stubs
 │       └── model/
@@ -156,14 +158,14 @@ my-property-agent/
 │       └── test_streamlit_client.py # 9 tests (+ 4 _get_agent_response tests)
 │
 └── logs/
-    └── telegram_agent.log           # Telegram bot runtime log
+    └── agent.log                    # Unified runtime log (all clients)
 ```
 
 ---
 
 ## Configuration
 
-All settings live in `agentP/.env`. Loaded automatically by `agentP/src/config/config.py`.
+All settings live in `.env` at the project root. Loaded automatically by `agentP/src/config/config.py` via an absolute path — works regardless of where the process is launched from.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -175,9 +177,9 @@ All settings live in `agentP/.env`. Loaded automatically by `agentP/src/config/c
 | `SENTENCE_TRANSFORMER_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
 | `PINECONE_API_KEY` | _(required for cloud)_ | Pinecone API key |
 | `PINECONE_INDEX_NAME` | `property-agent` | Pinecone index name |
-| `PROMPT_FILE` | `prompts/System_Prompt.txt` | Agent system prompt path |
-| `REFORMULATION_PROMPT` | `prompts/reformulated_prompt.txt` | Query rewrite template path |
-| `INTERACTION_FILE` | `prompts/interaction.json` | CLI interaction strings path |
+| `PROMPT_FILE` | `agentP/src/prompts/System_Prompt.txt` | Agent system prompt path |
+| `REFORMULATION_PROMPT` | `agentP/src/prompts/reformulated_prompt.txt` | Query rewrite template path |
+| `INTERACTION_FILE` | `agentP/src/prompts/interaction.json` | CLI interaction strings path |
 | `SESSION_DB_FILE` | `sessions.db` | SQLite file for chat session history |
 | `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | Token from [@BotFather](https://t.me/BotFather) |
 | `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header |
@@ -202,6 +204,12 @@ All settings live in `agentP/.env`. Loaded automatically by `agentP/src/config/c
 ```bash
 git clone https://github.com/your-username/my-property-agent.git
 cd my-property-agent
+uv venv && uv sync
+```
+
+Or with pip:
+
+```bash
 pip install -r agentP/requirements.txt
 ```
 
@@ -211,10 +219,10 @@ Pull the LLM model:
 ollama pull llama3.2
 ```
 
-Copy and edit the environment file:
+Edit the environment file at the project root:
 
 ```bash
-cp agentP/.env.example agentP/.env   # or edit agentP/.env directly
+cp .env.example .env   # or edit .env directly
 ```
 
 ---
@@ -269,7 +277,7 @@ python -c "from clients.streamlit.main import StreamlitClient; StreamlitClient()
 python -m clients.telegram.main
 ```
 
-Set `TELEGRAM_BOT_TOKEN` in `agentP/.env` before starting. The bot streams the property agent's response back to the user, editing the message every 20 tokens.
+Set `TELEGRAM_BOT_TOKEN` in `.env` before starting. The bot streams the property agent's response back to the user, editing the message every 20 tokens.
 
 ### Cron job (scheduled search)
 
@@ -328,7 +336,7 @@ All external dependencies (LLM, vector store, network, Telegram, FastAPI) are mo
 
 ## LangSmith observability
 
-Set the following in `agentP/.env` to enable tracing:
+Set the following in `.env` to enable tracing:
 
 ```env
 LANGCHAIN_TRACING_V2=true

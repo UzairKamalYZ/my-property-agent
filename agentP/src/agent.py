@@ -1,10 +1,10 @@
 import json
 from rich.console import Console
 
-from config.config import Config
-from model.llm_factory import create_llm
-from model.llm_model_graph import LlmModelGraph
-from scraping.web_scraper import WebScraper
+from .config.config import Config
+from .model.llm_factory import create_llm
+from .model.llm_model_graph import LlmModelGraph
+from .scraping.web_scraper import WebScraper
 
 
 class LocalAgent:
