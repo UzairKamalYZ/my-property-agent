@@ -37,6 +37,11 @@ _Config = MagicMock()
 _Config.API_KEY = ""
 _Config.TELEGRAM_BOT_TOKEN = "test-token"
 _Config.CRON_SEARCH_PROMPT = "find properties"
+# llm_model_graph.py reads these three at module level via os.environ.setdefault;
+# they must be real strings or the call raises TypeError when both test suites run together.
+_Config.LANGCHAIN_TRACING_V2 = "false"
+_Config.LANGCHAIN_PROJECT = "my-property-agent"
+_Config.LANGCHAIN_API_KEY = ""
 _config_mod.Config = _Config
 
 # ---------------------------------------------------------------------------

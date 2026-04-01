@@ -1,5 +1,15 @@
+import sys
+import importlib.machinery
 import unittest
 from unittest.mock import patch, MagicMock
+
+# Python 3.13 + system faiss: __spec__ is None, which causes
+# importlib.util.find_spec("faiss") — called deep inside transformers during
+# langchain_core import — to raise ValueError.  A MagicMock is not enough
+# because downstream code reads spec.name expecting a real str; use a proper
+# ModuleSpec instead.
+if "faiss" in sys.modules and getattr(sys.modules["faiss"], "__spec__", None) is None:
+    sys.modules["faiss"].__spec__ = importlib.machinery.ModuleSpec("faiss", None)
 
 from langchain_core.messages import HumanMessage, AIMessage
 
