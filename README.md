@@ -222,7 +222,7 @@ ollama pull llama3.2
 Edit the environment file at the project root:
 
 ```bash
-cp .env.example .env   # or edit .env directly
+cp .env.template .env   # or edit .env directly
 ```
 
 ---
