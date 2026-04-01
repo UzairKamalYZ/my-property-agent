@@ -23,6 +23,8 @@ class Config:
     REFORMULATION_PROMPT = os.path.join(os.getenv("REFORMULATION_PROMPT"))
     # Telegram / LangSmith integrations
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+    AI_PROVIDER_BASE_URL = os.getenv("AI_PROVIDER_BASE_URL", "http://localhost:11434/v1")
+    AI_PROVIDER_API_KEY = os.getenv("AI_PROVIDER_API_KEY", "ollama")
     LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false")
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "my-property-agent")

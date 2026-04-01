@@ -1,27 +1,36 @@
 import logging
 import os
 import uuid
-from typing import TypedDict, List
+from typing import Annotated, List, TypedDict
 
 logger = logging.getLogger(__name__)
 
-from langchain_core.language_models import BaseLanguageModel
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import (
+    HumanMessage,
+    AIMessage,
+    SystemMessage,
+    AIMessageChunk,
+    AnyMessage,
+)
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import ChatPromptTemplate
 from langsmith import traceable
 
 from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode, tools_condition
 
 from ..config.config import Config
 from .embedder import Embedder
 from .rag_context_manager import RagContextManager
+from .tools import make_property_search_tool
 
 # LangSmith picks these up automatically from the environment
 os.environ.setdefault("LANGCHAIN_TRACING_V2", Config.LANGCHAIN_TRACING_V2)
 os.environ.setdefault("LANGCHAIN_PROJECT", Config.LANGCHAIN_PROJECT)
 if Config.LANGCHAIN_API_KEY:
-     os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
+    os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
 
 
 # ------------------- STATE -------------------
@@ -29,23 +38,23 @@ if Config.LANGCHAIN_API_KEY:
 class State(TypedDict):
     user_prompt: str
     reformulated_question: str
-    context: str
-    answer: str
-    history: List
+    messages: Annotated[List[AnyMessage], add_messages]
 
 
 # ------------------- MODEL -------------------
 
 class LlmModelGraph:
-    """LangGraph-based reimplementation of LlmModel: reformulate → retrieve → generate."""
+    """LangGraph agent that calls the property-search RAG tool only when needed."""
 
-    def __init__(self, llm: BaseLanguageModel):
+    def __init__(self, llm: BaseChatModel):
         self.llm = llm
         self.system_prompt = self._load_file(Config.PROMPT_FILE)
         self.reformulation_template = self._load_file(Config.REFORMULATION_PROMPT)
         self.rag_context_manager = RagContextManager(Embedder())
         self.history: List = []
         self.session_id = str(uuid.uuid4())
+        self._property_search_tool = make_property_search_tool(self.rag_context_manager)
+        self._llm_with_tools = self.llm.bind_tools([self._property_search_tool])
         self.graph = self._build_graph()
 
     # ------------------- PUBLIC -------------------
@@ -54,12 +63,16 @@ class LlmModelGraph:
     def ask(self, user_query: str, session_id: str = None) -> str:
         state = self._initial_state(user_query)
         result = self.graph.invoke(state, config={"run_name": "property-rag-pipeline"})
-        self.history = result["history"]
-        return result["answer"]
+        answer = result["messages"][-1].content
+        self.history = self.history + [
+            HumanMessage(content=user_query),
+            AIMessage(content=answer),
+        ]
+        return answer
 
     @traceable(name="LlmModelGraph.ask_stream", run_type="chain", tags=["property-agent", "streaming"])
     def ask_stream(self, user_query: str, session_id: str = None):
-        """Yields token chunks from the generate node."""
+        """Yields text token chunks from the agent node, skipping tool-call chunks."""
         state = self._initial_state(user_query)
         full_answer = ""
         for chunk, metadata in self.graph.stream(
@@ -67,11 +80,14 @@ class LlmModelGraph:
             stream_mode="messages",
             config={"run_name": "property-rag-pipeline-stream"},
         ):
-            if metadata.get("langgraph_node") == "generate" and hasattr(chunk, "content"):
-                token = chunk.content
-                if token:
-                    full_answer += token
-                    yield token
+            if (
+                metadata.get("langgraph_node") == "agent"
+                and isinstance(chunk, AIMessageChunk)
+                and chunk.content
+                and not chunk.tool_call_chunks
+            ):
+                full_answer += chunk.content
+                yield chunk.content
 
         self.history = self.history + [
             HumanMessage(content=user_query),
@@ -87,13 +103,13 @@ class LlmModelGraph:
         graph = StateGraph(State)
 
         graph.add_node("reformulate", self._reformulate_node)
-        graph.add_node("retrieve", self._retrieve_node)
-        graph.add_node("generate", self._generate_node)
+        graph.add_node("agent", self._agent_node)
+        graph.add_node("tools", ToolNode([self._property_search_tool]))
 
         graph.add_edge(START, "reformulate")
-        graph.add_edge("reformulate", "retrieve")
-        graph.add_edge("retrieve", "generate")
-        graph.add_edge("generate", END)
+        graph.add_edge("reformulate", "agent")
+        graph.add_conditional_edges("agent", tools_condition)
+        graph.add_edge("tools", "agent")
 
         return graph.compile()
 
@@ -107,32 +123,23 @@ class LlmModelGraph:
         logger.info("[reformulate] output: %s", reformulated)
         return {"reformulated_question": reformulated}
 
-    def _retrieve_node(self, state: State) -> dict:
-        logger.info("[retrieve] querying with: %s", state["reformulated_question"])
-        context = self.rag_context_manager.get_context(state["reformulated_question"])
-        logger.info("[retrieve] context length: %d chars", len(context))
-        return {"context": context}
+    def _agent_node(self, state: State) -> dict:
+        if not state["messages"]:
+            # First call: build message list from system prompt + history + reformulated question
+            logger.info("[agent] first call — building messages from history + reformulated question")
+            messages = (
+                [SystemMessage(content=self.system_prompt)]
+                + list(self.history)
+                + [HumanMessage(content=state["reformulated_question"])]
+            )
+        else:
+            # Subsequent call after tool execution: pass accumulated messages as-is
+            logger.info("[agent] subsequent call — %d messages in context", len(state["messages"]))
+            messages = state["messages"]
 
-    def _generate_node(self, state: State) -> dict:
-        logger.info("[generate] history turns: %d", len(state["history"]))
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", self.system_prompt),
-            MessagesPlaceholder(variable_name="history"),
-            ("human", "{question}"),
-            ("system", "Relevant property listings:\n{context}"),
-        ])
-        chain = prompt | self.llm | StrOutputParser()
-        answer = chain.invoke({
-            "question": state["reformulated_question"],
-            "context": state["context"],
-            "history": state["history"],
-        })
-        updated_history = state["history"] + [
-            HumanMessage(content=state["user_prompt"]),
-            AIMessage(content=answer),
-        ]
-        logger.info("[generate] answer length: %d chars", len(answer))
-        return {"answer": answer, "history": updated_history}
+        response = self._llm_with_tools.invoke(messages)
+        logger.info("[agent] has_tool_calls: %s", bool(getattr(response, "tool_calls", [])))
+        return {"messages": [response]}
 
     # ------------------- HELPERS -------------------
 
@@ -140,9 +147,7 @@ class LlmModelGraph:
         return {
             "user_prompt": user_query,
             "reformulated_question": "",
-            "context": "",
-            "answer": "",
-            "history": list(self.history),
+            "messages": [],
         }
 
     @staticmethod

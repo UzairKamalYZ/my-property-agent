@@ -42,6 +42,8 @@ _Config.CRON_SEARCH_PROMPT = "find properties"
 _Config.LANGCHAIN_TRACING_V2 = "false"
 _Config.LANGCHAIN_PROJECT = "my-property-agent"
 _Config.LANGCHAIN_API_KEY = ""
+_Config.AI_PROVIDER_API_KEY = "ollama"
+_Config.AI_PROVIDER_BASE_URL = "http://localhost:11434/v1"
 _config_mod.Config = _Config
 
 # ---------------------------------------------------------------------------

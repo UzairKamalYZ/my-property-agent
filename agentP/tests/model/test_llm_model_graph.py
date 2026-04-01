@@ -5,13 +5,13 @@ from unittest.mock import patch, MagicMock
 
 # Python 3.13 + system faiss: __spec__ is None, which causes
 # importlib.util.find_spec("faiss") — called deep inside transformers during
-# langchain_core import — to raise ValueError.  A MagicMock is not enough
+# langchain_core import — to raise ValueError. A MagicMock is not enough
 # because downstream code reads spec.name expecting a real str; use a proper
 # ModuleSpec instead.
 if "faiss" in sys.modules and getattr(sys.modules["faiss"], "__spec__", None) is None:
     sys.modules["faiss"].__spec__ = importlib.machinery.ModuleSpec("faiss", None)
 
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, AIMessageChunk
 
 from agentP.src.model.llm_model_graph import LlmModelGraph, State
 
@@ -32,19 +32,24 @@ class TestLlmModelGraph(unittest.TestCase):
     def setUp(self, mock_load_file, MockEmbedder, MockRagContextManager):
         """
         Build a LlmModelGraph with all heavy dependencies mocked out:
-          - _load_file         → returns fake prompt strings (no filesystem access)
-          - Embedder           → no SentenceTransformer model is loaded
-          - RagContextManager  → no vector store is queried
+          - _load_file            → returns fake prompt strings (no filesystem access)
+          - Embedder              → no SentenceTransformer model is loaded
+          - RagContextManager     → no vector store is queried
 
-        After construction the compiled LangGraph is replaced with a plain
-        MagicMock so that ask() / ask_stream() tests are fast and isolated.
+        After construction the compiled LangGraph and the tool-bound LLM are
+        replaced with plain MagicMocks so that ask() / ask_stream() and node
+        tests are fast and isolated.
         """
         mock_load_file.side_effect = [_FAKE_SYSTEM_PROMPT, _FAKE_REFORMULATION_TEMPLATE]
 
         self.mock_llm = MagicMock()
         self.model = LlmModelGraph(self.mock_llm)
 
-        # Replace the compiled graph so public-API tests don't run real nodes.
+        # Replace tool-bound LLM so node tests control what the agent LLM returns.
+        self.mock_llm_with_tools = MagicMock(name="LlmWithToolsMock")
+        self.model._llm_with_tools = self.mock_llm_with_tools
+
+        # Replace the compiled graph so public-API tests don't run real LangGraph nodes.
         self.model.graph = MagicMock(name="CompiledGraphMock")
 
     # ------------------------------------------------------------------
@@ -52,10 +57,9 @@ class TestLlmModelGraph(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_should_return_answer_string_when_ask_is_called(self):
-        """ask() invokes the graph and returns the answer string from the result state."""
+        """ask() returns the content of the last message from the graph result."""
         self.model.graph.invoke.return_value = {
-            "answer": "3 listings found in Warsaw.",
-            "history": [],
+            "messages": [AIMessage(content="3 listings found in Warsaw.")],
         }
 
         result = self.model.ask("3-bed apartment in Warsaw")
@@ -64,63 +68,82 @@ class TestLlmModelGraph(unittest.TestCase):
 
     def test_should_invoke_graph_once_when_ask_is_called(self):
         """ask() delegates to graph.invoke exactly once."""
-        self.model.graph.invoke.return_value = {"answer": "ok", "history": []}
+        self.model.graph.invoke.return_value = {"messages": [AIMessage(content="ok")]}
 
         self.model.ask("3-bed apartment in Warsaw")
 
         self.model.graph.invoke.assert_called_once()
 
-    def test_should_update_history_from_graph_result_when_ask_is_called(self):
-        """ask() replaces self.history with whatever the graph returns in 'history'."""
-        new_history = [HumanMessage(content="hi"), AIMessage(content="hello")]
-        self.model.graph.invoke.return_value = {"answer": "ok", "history": new_history}
+    def test_should_build_history_from_query_and_answer_when_ask_is_called(self):
+        """ask() appends HumanMessage(user_query) + AIMessage(answer) to self.history."""
+        self.model.graph.invoke.return_value = {
+            "messages": [AIMessage(content="3 listings found.")]
+        }
 
-        self.model.ask("hi")
+        self.model.ask("find me a flat")
 
-        self.assertEqual(self.model.history, new_history)
+        self.assertEqual(len(self.model.history), 2)
+        self.assertIsInstance(self.model.history[0], HumanMessage)
+        self.assertIsInstance(self.model.history[1], AIMessage)
+        self.assertEqual(self.model.history[0].content, "find me a flat")
+        self.assertEqual(self.model.history[1].content, "3 listings found.")
+
+    def test_should_accumulate_history_across_turns_when_asking(self):
+        """ask() appends to pre-existing history rather than replacing it."""
+        self.model.history = [
+            HumanMessage(content="turn 1"),
+            AIMessage(content="answer 1"),
+        ]
+        self.model.graph.invoke.return_value = {
+            "messages": [AIMessage(content="answer 2")]
+        }
+
+        self.model.ask("turn 2")
+
+        self.assertEqual(len(self.model.history), 4)
+        self.assertEqual(self.model.history[-2].content, "turn 2")
+        self.assertEqual(self.model.history[-1].content, "answer 2")
 
     def test_should_pass_correct_initial_state_when_ask_is_called(self):
-        """ask() builds the correct State dict and passes it to graph.invoke."""
-        prior_history = [HumanMessage(content="previous turn")]
-        self.model.history = prior_history
-        self.model.graph.invoke.return_value = {"answer": "", "history": []}
+        """ask() builds a State with user_prompt, empty reformulated_question and messages=[]."""
+        self.model.graph.invoke.return_value = {"messages": [AIMessage(content="")]}
 
         self.model.ask("find a flat")
 
         state_arg = self.model.graph.invoke.call_args[0][0]
         self.assertEqual(state_arg["user_prompt"], "find a flat")
         self.assertEqual(state_arg["reformulated_question"], "")
-        self.assertEqual(state_arg["context"], "")
-        self.assertEqual(state_arg["answer"], "")
-        self.assertEqual(state_arg["history"], prior_history)
+        self.assertEqual(state_arg["messages"], [])
+        self.assertNotIn("context", state_arg)
+        self.assertNotIn("answer", state_arg)
+        self.assertNotIn("history", state_arg)
 
     # ------------------------------------------------------------------
     # ask_stream()
     # ------------------------------------------------------------------
 
-    def _stream_chunk(self, content: str, node: str):
-        """Helper: create a (chunk, metadata) pair as graph.stream yields."""
-        chunk = MagicMock()
-        chunk.content = content
+    def _stream_chunk(self, content: str, node: str, tool_call_chunks=None):
+        """Helper: create a (AIMessageChunk, metadata) pair as graph.stream yields."""
+        chunk = AIMessageChunk(content=content, tool_call_chunks=tool_call_chunks or [])
         return (chunk, {"langgraph_node": node})
 
-    def test_should_yield_tokens_from_generate_node_when_streaming(self):
-        """ask_stream() yields token content only from the 'generate' node."""
+    def test_should_yield_tokens_from_agent_node_when_streaming(self):
+        """ask_stream() yields text content only from the 'agent' node."""
         self.model.graph.stream.return_value = iter([
-            self._stream_chunk("Here ", "generate"),
-            self._stream_chunk("are ", "generate"),
-            self._stream_chunk("some properties.", "generate"),
+            self._stream_chunk("Here ", "agent"),
+            self._stream_chunk("are ", "agent"),
+            self._stream_chunk("some properties.", "agent"),
         ])
 
         tokens = list(self.model.ask_stream("find a flat"))
 
         self.assertEqual(tokens, ["Here ", "are ", "some properties."])
 
-    def test_should_ignore_non_generate_nodes_when_streaming(self):
-        """ask_stream() does not yield chunks from reformulate or retrieve nodes."""
+    def test_should_ignore_non_agent_nodes_when_streaming(self):
+        """ask_stream() does not yield chunks from reformulate or tools nodes."""
         self.model.graph.stream.return_value = iter([
             self._stream_chunk("reformulated query", "reformulate"),
-            self._stream_chunk("retrieved context", "retrieve"),
+            self._stream_chunk("tool result", "tools"),
         ])
 
         tokens = list(self.model.ask_stream("find a flat"))
@@ -128,19 +151,35 @@ class TestLlmModelGraph(unittest.TestCase):
         self.assertEqual(tokens, [])
 
     def test_should_skip_empty_tokens_when_streaming(self):
-        """ask_stream() does not yield empty-string chunks from the generate node."""
+        """ask_stream() does not yield empty-string chunks from the agent node."""
         self.model.graph.stream.return_value = iter([
-            self._stream_chunk("", "generate"),
-            self._stream_chunk("hello", "generate"),
-            self._stream_chunk("", "generate"),
+            self._stream_chunk("", "agent"),
+            self._stream_chunk("hello", "agent"),
+            self._stream_chunk("", "agent"),
         ])
 
         tokens = list(self.model.ask_stream("test"))
 
         self.assertEqual(tokens, ["hello"])
 
-    def test_should_yield_nothing_when_stream_has_no_generate_chunks(self):
-        """ask_stream() yields an empty sequence when the graph produces no generate-node output."""
+    def test_should_skip_tool_call_chunks_when_streaming(self):
+        """ask_stream() does not yield chunks that carry tool_call_chunks (tool invocations)."""
+        tool_chunk = AIMessageChunk(
+            content="",
+            tool_call_chunks=[{"name": "property_search", "args": "", "id": "1", "index": 0}],
+        )
+        text_chunk = AIMessageChunk(content="Here are the results.")
+        self.model.graph.stream.return_value = iter([
+            (tool_chunk, {"langgraph_node": "agent"}),
+            (text_chunk, {"langgraph_node": "agent"}),
+        ])
+
+        tokens = list(self.model.ask_stream("find flats in Warsaw"))
+
+        self.assertEqual(tokens, ["Here are the results."])
+
+    def test_should_yield_nothing_when_stream_has_no_agent_chunks(self):
+        """ask_stream() yields an empty sequence when the graph produces no agent-node output."""
         self.model.graph.stream.return_value = iter([])
 
         tokens = list(self.model.ask_stream("find a flat"))
@@ -150,7 +189,7 @@ class TestLlmModelGraph(unittest.TestCase):
     def test_should_append_human_and_ai_messages_to_history_when_streaming(self):
         """ask_stream() appends HumanMessage + AIMessage to self.history after completion."""
         self.model.graph.stream.return_value = iter([
-            self._stream_chunk("answer text", "generate"),
+            self._stream_chunk("answer text", "agent"),
         ])
 
         list(self.model.ask_stream("find a flat"))
@@ -168,7 +207,7 @@ class TestLlmModelGraph(unittest.TestCase):
             AIMessage(content="answer 1"),
         ]
         self.model.graph.stream.return_value = iter([
-            self._stream_chunk("answer 2", "generate"),
+            self._stream_chunk("answer 2", "agent"),
         ])
 
         list(self.model.ask_stream("turn 2"))
@@ -178,55 +217,70 @@ class TestLlmModelGraph(unittest.TestCase):
         self.assertEqual(self.model.history[-1].content, "answer 2")
 
     # ------------------------------------------------------------------
-    # _retrieve_node()
+    # _agent_node()
     # ------------------------------------------------------------------
 
-    def test_should_call_get_context_with_reformulated_question_when_retrieving(self):
-        """_retrieve_node() passes reformulated_question to get_context()."""
-        self.model.rag_context_manager.get_context.return_value = "Listing 1: ..."
-        state: State = {
+    def _make_agent_state(self, messages=None, reformulated="2 bedroom Warsaw"):
+        """Helper: build a minimal State for _agent_node tests."""
+        return {
             "user_prompt": "find a flat",
-            "reformulated_question": "2 bedroom apartment Warsaw",
-            "context": "",
-            "answer": "",
-            "history": [],
+            "reformulated_question": reformulated,
+            "messages": messages if messages is not None else [],
         }
 
-        self.model._retrieve_node(state)
+    def test_should_build_initial_messages_with_system_prompt_and_history_when_first_agent_call(self):
+        """On first call (empty messages), _agent_node prepends system prompt + history + question."""
+        self.model.history = [
+            HumanMessage(content="prev question"),
+            AIMessage(content="prev answer"),
+        ]
+        self.mock_llm_with_tools.invoke.return_value = AIMessage(content="some answer")
+        state = self._make_agent_state(messages=[], reformulated="2 bed Warsaw")
 
-        self.model.rag_context_manager.get_context.assert_called_once_with(
-            "2 bedroom apartment Warsaw"
-        )
+        self.model._agent_node(state)
 
-    def test_should_return_context_dict_when_retrieving(self):
-        """_retrieve_node() returns {"context": <string from get_context>}."""
-        self.model.rag_context_manager.get_context.return_value = "Listing 1: Warsaw flat"
-        state: State = {
-            "user_prompt": "find a flat",
-            "reformulated_question": "2 bedroom Warsaw",
-            "context": "",
-            "answer": "",
-            "history": [],
-        }
+        call_args = self.mock_llm_with_tools.invoke.call_args[0][0]
+        self.assertIsInstance(call_args[0], SystemMessage)
+        self.assertEqual(call_args[0].content, _FAKE_SYSTEM_PROMPT)
+        self.assertEqual(call_args[1].content, "prev question")
+        self.assertEqual(call_args[2].content, "prev answer")
+        self.assertIsInstance(call_args[-1], HumanMessage)
+        self.assertEqual(call_args[-1].content, "2 bed Warsaw")
 
-        result = self.model._retrieve_node(state)
+    def test_should_pass_existing_messages_unchanged_when_subsequent_agent_call(self):
+        """On subsequent calls (non-empty messages), _agent_node passes messages as-is."""
+        existing = [
+            SystemMessage(content=_FAKE_SYSTEM_PROMPT),
+            HumanMessage(content="q"),
+            AIMessage(content="", tool_calls=[{"name": "property_search", "args": {}, "id": "1"}]),
+        ]
+        self.mock_llm_with_tools.invoke.return_value = AIMessage(content="final answer")
+        state = self._make_agent_state(messages=existing)
 
-        self.assertEqual(result, {"context": "Listing 1: Warsaw flat"})
+        self.model._agent_node(state)
 
-    def test_should_return_empty_context_when_get_context_returns_empty_string(self):
-        """_retrieve_node() propagates an empty string from get_context without modification."""
-        self.model.rag_context_manager.get_context.return_value = ""
-        state: State = {
-            "user_prompt": "anything",
-            "reformulated_question": "anything",
-            "context": "",
-            "answer": "",
-            "history": [],
-        }
+        call_args = self.mock_llm_with_tools.invoke.call_args[0][0]
+        self.assertEqual(call_args, existing)
 
-        result = self.model._retrieve_node(state)
+    def test_should_return_messages_list_from_agent_node(self):
+        """_agent_node() returns {"messages": [<AIMessage response>]}."""
+        response = AIMessage(content="Here are listings.")
+        self.mock_llm_with_tools.invoke.return_value = response
+        state = self._make_agent_state()
 
-        self.assertEqual(result, {"context": ""})
+        result = self.model._agent_node(state)
+
+        self.assertEqual(result, {"messages": [response]})
+
+    def test_should_not_modify_self_history_inside_agent_node(self):
+        """_agent_node() must not mutate self.history — history management belongs in ask/ask_stream."""
+        prior = [HumanMessage(content="prior"), AIMessage(content="prior ans")]
+        self.model.history = list(prior)
+        self.mock_llm_with_tools.invoke.return_value = AIMessage(content="response")
+
+        self.model._agent_node(self._make_agent_state())
+
+        self.assertEqual(self.model.history, prior)
 
     # ------------------------------------------------------------------
     # _reformulate_node()
@@ -234,17 +288,13 @@ class TestLlmModelGraph(unittest.TestCase):
 
     def test_should_return_reformulated_question_when_reformulating(self):
         """_reformulate_node() invokes the LLM chain and stores the output."""
-        # The node builds: ChatPromptTemplate | llm | StrOutputParser.
-        # Returning an AIMessage makes StrOutputParser extract its .content.
         self.mock_llm.return_value = AIMessage(
             content="2 bedroom apartment Warsaw affordable"
         )
         state: State = {
             "user_prompt": "cheap 2 bed Warsaw",
             "reformulated_question": "",
-            "context": "",
-            "answer": "",
-            "history": [],
+            "messages": [],
         }
 
         result = self.model._reformulate_node(state)
@@ -255,84 +305,6 @@ class TestLlmModelGraph(unittest.TestCase):
         )
 
     # ------------------------------------------------------------------
-    # _generate_node()
-    # ------------------------------------------------------------------
-
-    def test_should_return_answer_from_llm_when_generating(self):
-        """_generate_node() invokes the LLM chain and returns the answer string."""
-        self.mock_llm.return_value = AIMessage(content="Here are 3 properties in Warsaw.")
-        state: State = {
-            "user_prompt": "find a flat",
-            "reformulated_question": "2 bedroom apartment Warsaw",
-            "context": "Listing 1: Warsaw flat",
-            "answer": "",
-            "history": [],
-        }
-
-        result = self.model._generate_node(state)
-
-        self.assertEqual(result["answer"], "Here are 3 properties in Warsaw.")
-
-    def test_should_append_human_and_ai_messages_to_history_when_generating(self):
-        """_generate_node() appends HumanMessage + AIMessage for the current turn."""
-        self.mock_llm.return_value = AIMessage(content="Found 2 properties.")
-        state: State = {
-            "user_prompt": "find a flat",
-            "reformulated_question": "2 bedroom apartment Warsaw",
-            "context": "Listing 1",
-            "answer": "",
-            "history": [],
-        }
-
-        result = self.model._generate_node(state)
-        history = result["history"]
-
-        self.assertEqual(len(history), 2)
-        self.assertIsInstance(history[0], HumanMessage)
-        self.assertIsInstance(history[1], AIMessage)
-        self.assertEqual(history[0].content, "find a flat")
-        self.assertEqual(history[1].content, "Found 2 properties.")
-
-    def test_should_preserve_existing_history_when_generating(self):
-        """_generate_node() keeps prior history intact before appending the new turn."""
-        existing = [HumanMessage(content="old q"), AIMessage(content="old a")]
-        self.mock_llm.return_value = AIMessage(content="new answer")
-        state: State = {
-            "user_prompt": "new question",
-            "reformulated_question": "new reformulated",
-            "context": "context",
-            "answer": "",
-            "history": existing,
-        }
-
-        result = self.model._generate_node(state)
-        history = result["history"]
-
-        self.assertEqual(len(history), 4)
-        self.assertEqual(history[0].content, "old q")
-        self.assertEqual(history[1].content, "old a")
-        self.assertEqual(history[2].content, "new question")
-        self.assertEqual(history[3].content, "new answer")
-
-    def test_should_use_original_user_prompt_in_history_not_reformulated_when_generating(self):
-        """_generate_node() records user_prompt (not reformulated_question) in the history HumanMessage."""
-        self.mock_llm.return_value = AIMessage(content="answer")
-        state: State = {
-            "user_prompt": "cheap 2 bed Warsaw",
-            "reformulated_question": "affordable 2-bedroom apartment Warsaw city centre",
-            "context": "Listing 1",
-            "answer": "",
-            "history": [],
-        }
-
-        result = self.model._generate_node(state)
-        human_msg = result["history"][0]
-
-        self.assertIsInstance(human_msg, HumanMessage)
-        self.assertEqual(human_msg.content, "cheap 2 bed Warsaw")
-        self.assertNotEqual(human_msg.content, "affordable 2-bedroom apartment Warsaw city centre")
-
-    # ------------------------------------------------------------------
     # _initial_state()
     # ------------------------------------------------------------------
 
@@ -341,25 +313,14 @@ class TestLlmModelGraph(unittest.TestCase):
         state = self.model._initial_state("find me a studio")
         self.assertEqual(state["user_prompt"], "find me a studio")
 
-    def test_should_have_empty_derived_fields_when_building_initial_state(self):
-        """_initial_state() initialises reformulated_question, context, and answer to ''."""
+    def test_should_have_empty_fields_when_building_initial_state(self):
+        """_initial_state() initialises reformulated_question to '' and messages to []."""
         state = self.model._initial_state("anything")
         self.assertEqual(state["reformulated_question"], "")
-        self.assertEqual(state["context"], "")
-        self.assertEqual(state["answer"], "")
-
-    def test_should_copy_history_independently_when_building_initial_state(self):
-        """_initial_state() makes an independent copy — mutations don't bleed back."""
-        original = [HumanMessage(content="hi")]
-        self.model.history = original
-
-        state = self.model._initial_state("test")
-
-        # Same contents …
-        self.assertEqual(state["history"], original)
-        # … but a separate list.
-        state["history"].append(AIMessage(content="extra"))
-        self.assertEqual(self.model.history, original)
+        self.assertEqual(state["messages"], [])
+        self.assertNotIn("context", state)
+        self.assertNotIn("answer", state)
+        self.assertNotIn("history", state)
 
     # ------------------------------------------------------------------
     # close()
