@@ -35,3 +35,5 @@ class Config:
     SESSION_DB_FILE = os.getenv("SESSION_DB_FILE", "sessions.db")
     # Selenium scraping browser connection string
     SBR_WEBDRIVER = os.getenv("SBR_WEBDRIVER", "")
+    # Number of listings to retrieve per RAG search
+    RAG_K = int(os.getenv("RAG_K", "5"))
