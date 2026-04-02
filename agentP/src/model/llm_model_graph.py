@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import uuid
@@ -378,11 +379,82 @@ class LlmModelGraph:
         response = self._llm_with_tools.invoke(messages)
         logger.info("[agent] has_tool_calls: %s", bool(getattr(response, "tool_calls", [])))
 
+        # Fallback: some local models (e.g. llama3.2 via Ollama) output a JSON
+        # tool-call description as plain text instead of using native function
+        # calling.  Detect that pattern and convert it into a proper AIMessage
+        # with tool_calls so LangGraph routes to the tools node as intended.
+        if not response.tool_calls and response.content:
+            parsed = self._try_parse_text_tool_call(response.content)
+            if parsed:
+                logger.warning(
+                    "[agent] LLM output tool call as text — converting to native call: %s",
+                    parsed,
+                )
+                response = AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": parsed["name"],
+                        "args": parsed["args"],
+                        "id": str(uuid.uuid4()),
+                    }],
+                )
+
         # Returning {"messages": [response]} triggers the add_messages reducer,
         # which appends the response to state["messages"] rather than replacing it
         return {"messages": [response]}
 
     # ------------------- HELPERS -------------------
+
+    @staticmethod
+    def _try_parse_text_tool_call(content: str) -> dict | None:
+        """
+        Attempt to parse a tool call that the LLM printed as JSON text instead of
+        making a native function call.
+
+        Some smaller local models (e.g. llama3.2 via Ollama) do not reliably use
+        the OpenAI function-calling wire format.  Instead they produce text like:
+
+            {"name": "property_search", "parameters": {"query": "2 bed Warsaw"}}
+
+        or, when they echo the Pydantic schema back as the value:
+
+            {"name": "property_search", "parameters": {
+                "query": {"type": "string", "description": "...", "value": "2 bed Warsaw"}
+            }}
+
+        This method extracts the tool name and the `query` string from both
+        variants and returns {"name": ..., "args": {"query": ...}}, or None if
+        the content is not a recognisable tool call.
+
+        Only the `property_search` tool is supported because it is the only tool
+        registered in this graph.
+        """
+        if not content:
+            return None
+        try:
+            # Strip markdown code fences if the model wrapped the JSON
+            text = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            data = json.loads(text)
+        except (json.JSONDecodeError, AttributeError):
+            return None
+
+        if not isinstance(data, dict) or data.get("name") != "property_search":
+            return None
+
+        # Query can be nested under "parameters", "arguments", or "args"
+        params = data.get("parameters") or data.get("arguments") or data.get("args") or {}
+        query = params.get("query", "")
+
+        # Handle the case where the LLM echoed the Pydantic Field schema:
+        # {"type": "string", "description": "...", "value": "actual query"}
+        if isinstance(query, dict):
+            query = query.get("value") or query.get("default") or ""
+
+        query = str(query).strip()
+        if not query:
+            return None
+
+        return {"name": "property_search", "args": {"query": query}}
 
     def _get_history(self, session_id: str) -> list:
         """

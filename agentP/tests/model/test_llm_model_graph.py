@@ -421,6 +421,93 @@ class TestLlmModelGraph(unittest.TestCase):
         self.assertEqual(len(history), 1)
 
     # ------------------------------------------------------------------
+    # _try_parse_text_tool_call()  — fallback for models that output JSON text
+    # ------------------------------------------------------------------
+
+    def test_should_return_none_when_content_is_empty(self):
+        """_try_parse_text_tool_call returns None for empty / None input."""
+        self.assertIsNone(LlmModelGraph._try_parse_text_tool_call(""))
+        self.assertIsNone(LlmModelGraph._try_parse_text_tool_call(None))
+
+    def test_should_return_none_when_content_is_plain_text(self):
+        """_try_parse_text_tool_call returns None when content is a normal answer."""
+        self.assertIsNone(LlmModelGraph._try_parse_text_tool_call("Here are some properties."))
+
+    def test_should_return_none_when_json_has_unknown_tool_name(self):
+        """_try_parse_text_tool_call returns None for unrecognised tool names."""
+        content = '{"name": "other_tool", "parameters": {"query": "test"}}'
+        self.assertIsNone(LlmModelGraph._try_parse_text_tool_call(content))
+
+    def test_should_parse_simple_parameters_format(self):
+        """Parses {"name": "property_search", "parameters": {"query": "..."}}."""
+        content = '{"name": "property_search", "parameters": {"query": "2 bed Warsaw"}}'
+        result = LlmModelGraph._try_parse_text_tool_call(content)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["name"], "property_search")
+        self.assertEqual(result["args"]["query"], "2 bed Warsaw")
+
+    def test_should_parse_arguments_format(self):
+        """Parses {"name": "property_search", "arguments": {"query": "..."}}."""
+        content = '{"name": "property_search", "arguments": {"query": "studio Krakow"}}'
+        result = LlmModelGraph._try_parse_text_tool_call(content)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["args"]["query"], "studio Krakow")
+
+    def test_should_parse_pydantic_schema_echo_format(self):
+        """Parses the nested schema-echo format where query is a dict with a 'value' key."""
+        content = (
+            '{"name": "property_search", "parameters": {'
+            '"query": {"type": "string", "description": "The property search query.", '
+            '"value": "I need to find an apartment for rent."}}}'
+        )
+        result = LlmModelGraph._try_parse_text_tool_call(content)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["args"]["query"], "I need to find an apartment for rent.")
+
+    def test_should_parse_json_wrapped_in_markdown_code_fence(self):
+        """Parses JSON that the LLM wrapped in a markdown code block."""
+        content = '```json\n{"name": "property_search", "parameters": {"query": "flat Warsaw"}}\n```'
+        result = LlmModelGraph._try_parse_text_tool_call(content)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["args"]["query"], "flat Warsaw")
+
+    def test_should_return_none_when_query_is_empty_after_extraction(self):
+        """_try_parse_text_tool_call returns None when a query string cannot be extracted."""
+        content = '{"name": "property_search", "parameters": {"query": ""}}'
+        self.assertIsNone(LlmModelGraph._try_parse_text_tool_call(content))
+
+    def test_should_convert_text_tool_call_to_native_in_agent_node(self):
+        """_agent_node converts a text-format tool call into an AIMessage with tool_calls."""
+        text_response = AIMessage(
+            content='{"name": "property_search", "parameters": {"query": "2 bed Warsaw"}}',
+        )
+        self.mock_llm_with_tools.invoke.return_value = text_response
+        state = self._make_agent_state(messages=[], reformulated="2 bed Warsaw")
+
+        result = self.model._agent_node(state)
+
+        msg = result["messages"][0]
+        self.assertIsInstance(msg, AIMessage)
+        self.assertEqual(len(msg.tool_calls), 1)
+        self.assertEqual(msg.tool_calls[0]["name"], "property_search")
+        self.assertEqual(msg.tool_calls[0]["args"]["query"], "2 bed Warsaw")
+
+    def test_should_not_convert_when_llm_makes_native_tool_call(self):
+        """_agent_node does NOT apply the fallback when the LLM already made a native tool call."""
+        native_response = AIMessage(
+            content="",
+            tool_calls=[{"name": "property_search", "args": {"query": "flat"}, "id": "tc-1"}],
+        )
+        self.mock_llm_with_tools.invoke.return_value = native_response
+        state = self._make_agent_state(messages=[], reformulated="flat")
+
+        result = self.model._agent_node(state)
+
+        msg = result["messages"][0]
+        # The original response object must be passed through unchanged
+        self.assertIs(msg, native_response)
+
+    # ------------------------------------------------------------------
     # close()
     # ------------------------------------------------------------------
 
