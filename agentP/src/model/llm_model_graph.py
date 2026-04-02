@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import uuid
 from typing import List, TypedDict
 
@@ -15,6 +16,7 @@ from langgraph.graph import StateGraph, START, END
 
 from ..config.config import Config
 from .embedder import Embedder
+from .finance_tools import close_finance_mcp, _mcp
 from .rag_context_manager import RagContextManager
 
 # LangSmith picks these up automatically from the environment
@@ -22,6 +24,12 @@ os.environ.setdefault("LANGCHAIN_TRACING_V2", Config.LANGCHAIN_TRACING_V2)
 os.environ.setdefault("LANGCHAIN_PROJECT", Config.LANGCHAIN_PROJECT)
 if Config.LANGCHAIN_API_KEY:
     os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
+
+# Regex to detect common non-USD ISO currency codes in property listing text.
+# When any of these are found in retrieved context, the retrieve node appends
+# live USD conversion rates so the LLM can present both the original price and
+# its USD equivalent without needing to call a tool itself.
+_NON_USD_CURRENCY_RE = re.compile(r'\b(PLN|EUR|GBP|CHF|NOK|SEK|DKK|CZK|HUF|RON)\b')
 
 
 # ------------------- STATE -------------------
@@ -46,6 +54,7 @@ class State(TypedDict):
 
     context : str
         Formatted property listings returned by the 'retrieve' node.
+        May include appended currency conversion rates for non-USD prices.
         Empty string when needs_search is False.
 
     answer : str
@@ -85,6 +94,11 @@ class LlmModelGraph:
       (e.g. Ollama /v1) do not reliably produce structured tool_calls — they
       often output the call as JSON text or ignore the schema entirely.
       Explicit conditional routing is deterministic and model-agnostic.
+
+    - Currency conversion: the retrieve node scans listings for non-USD
+      currencies (PLN, EUR, GBP, …) and appends live USD rates from the
+      finance MCP server. The generate node then has both prices available
+      without any tool-calling during generation.
 
     - Per-session history: each session_id has its own conversation list
       stored in self._histories so multiple concurrent users stay isolated.
@@ -159,8 +173,14 @@ class LlmModelGraph:
         ]
 
     def close(self):
-        """No-op cleanup hook — present for lifecycle compatibility with LocalAgent."""
-        pass
+        """
+        Shut down background resources.
+
+        Terminates the finance MCP subprocess (if running) so no orphaned
+        ``npx`` processes are left alive after the agent is stopped.
+        """
+        close_finance_mcp()
+        logger.debug("LlmModelGraph closed")
 
     # ------------------- GRAPH CONSTRUCTION -------------------
 
@@ -224,9 +244,18 @@ class LlmModelGraph:
         return {"needs_search": needs_search}
 
     def _retrieve_node(self, state: State) -> dict:
-        """Search the vector store and return formatted property listings as context."""
+        """
+        Search the vector store and return formatted property listings as context.
+
+        After retrieval, scans the context for non-USD currency codes (PLN, EUR,
+        GBP, …). When found, calls the finance MCP server to append live USD
+        conversion rates so the generate node can present both the original price
+        and its USD equivalent without any tool-calling during generation.
+        """
         logger.info("[retrieve] querying with: %s", state["reformulated_question"])
         context = self.rag_context_manager.get_context(state["reformulated_question"])
+        if context:
+            context = self._append_currency_rates(context)
         logger.info("[retrieve] context length: %d chars", len(context))
         return {"context": context}
 
@@ -266,6 +295,28 @@ class LlmModelGraph:
         return {"answer": answer}
 
     # ------------------- HELPERS -------------------
+
+    def _append_currency_rates(self, context: str) -> str:
+        """
+        Detect non-USD currency codes in context and append live USD rates.
+
+        Calls the finance MCP server once per detected currency to fetch the
+        current exchange rate. Appends a compact reference block at the end of
+        the context so the generate node can include both prices without calling
+        any tools at generation time.
+        """
+        currencies = sorted(set(_NON_USD_CURRENCY_RE.findall(context)))
+        if not currencies:
+            return context
+        rates = []
+        for currency in currencies:
+            rate = _mcp.call_tool("currency_convert", {"from": currency, "to": "USD", "amount": 1})
+            if rate:
+                rates.append(f"  1 {currency} = {rate}")
+            logger.debug("[retrieve] currency rate fetched: %s", currency)
+        if rates:
+            context += "\n\nCurrency conversion rates (live, 1 unit → USD):\n" + "\n".join(rates)
+        return context
 
     def _get_history(self, session_id: str) -> list:
         """Return the history list for session_id, creating an empty one if new."""

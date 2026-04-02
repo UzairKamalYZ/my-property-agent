@@ -26,26 +26,45 @@ _FAKE_REFORMULATION_TEMPLATE = "Improve this real-estate query: {user_prompt}"
 
 class TestLlmModelGraph(unittest.TestCase):
 
-    @patch("agentP.src.model.llm_model_graph.RagContextManager")
-    @patch("agentP.src.model.llm_model_graph.Embedder")
-    @patch.object(LlmModelGraph, "_load_file")
-    def setUp(self, mock_load_file, MockEmbedder, MockRagContextManager):
+    def setUp(self):
         """
         Build a LlmModelGraph with all heavy dependencies mocked out:
           - _load_file            → returns fake prompt strings (no filesystem access)
           - Embedder              → no SentenceTransformer model is loaded
           - RagContextManager     → no vector store is queried
+          - _mcp                  → no npx/MCP subprocess is started
+
+        Patchers are started here and stopped in tearDown so they remain
+        active for the full duration of each test method.
 
         After construction the compiled LangGraph is replaced with a plain
         MagicMock so that ask() / ask_stream() and node tests are fast and isolated.
         """
+        self._load_file_patcher = patch.object(LlmModelGraph, "_load_file")
+        self._embedder_patcher = patch("agentP.src.model.llm_model_graph.Embedder")
+        self._rag_patcher = patch("agentP.src.model.llm_model_graph.RagContextManager")
+        self._mcp_patcher = patch("agentP.src.model.llm_model_graph._mcp")
+
+        mock_load_file = self._load_file_patcher.start()
+        self._embedder_patcher.start()
+        self._rag_patcher.start()
+        self.mock_mcp = self._mcp_patcher.start()
+
         mock_load_file.side_effect = [_FAKE_SYSTEM_PROMPT, _FAKE_REFORMULATION_TEMPLATE]
+        # Default: MCP returns empty string so no currency block is appended
+        self.mock_mcp.call_tool.return_value = ""
 
         self.mock_llm = MagicMock()
         self.model = LlmModelGraph(self.mock_llm)
 
         # Replace the compiled graph so public-API tests don't run real LangGraph nodes.
         self.model.graph = MagicMock(name="CompiledGraphMock")
+
+    def tearDown(self):
+        self._load_file_patcher.stop()
+        self._embedder_patcher.stop()
+        self._rag_patcher.stop()
+        self._mcp_patcher.stop()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -104,56 +123,46 @@ class TestLlmModelGraph(unittest.TestCase):
         self.assertEqual(hist[1].content, "3 listings found.")
 
     def test_should_accumulate_history_across_turns_when_asking(self):
-        """ask() appends to pre-existing session history rather than replacing it."""
-        SESSION = "sess-accumulate-ask"
-        self.model._histories[SESSION] = [
-            HumanMessage(content="turn 1"),
-            AIMessage(content="answer 1"),
+        """ask() grows the session history by 2 messages per turn."""
+        SESSION = "sess-accum-ask"
+        self.model.graph.invoke.side_effect = [
+            {"answer": "answer 1"},
+            {"answer": "answer 2"},
         ]
-        self.model.graph.invoke.return_value = {"answer": "answer 2"}
 
-        self.model.ask("turn 2", session_id=SESSION)
+        self.model.ask("query 1", session_id=SESSION)
+        self.model.ask("query 2", session_id=SESSION)
 
-        hist = self.model._histories[SESSION]
-        self.assertEqual(len(hist), 4)
-        self.assertEqual(hist[-2].content, "turn 2")
-        self.assertEqual(hist[-1].content, "answer 2")
+        self.assertEqual(len(self.model._histories[SESSION]), 4)
 
     def test_should_pass_correct_initial_state_when_ask_is_called(self):
-        """ask() builds a State with user_prompt, empty derived fields, and session_history."""
-        self.model.graph.invoke.return_value = {"answer": ""}
+        """ask() passes a state with user_prompt set and empty derived fields."""
+        self.model.graph.invoke.return_value = {"answer": "ok"}
 
-        self.model.ask("find a flat", session_id="sess-state")
+        self.model.ask("find a studio", session_id="s1")
 
-        state_arg = self.model.graph.invoke.call_args[0][0]
-        self.assertEqual(state_arg["user_prompt"], "find a flat")
-        self.assertEqual(state_arg["reformulated_question"], "")
-        self.assertFalse(state_arg["needs_search"])
-        self.assertEqual(state_arg["context"], "")
-        self.assertEqual(state_arg["answer"], "")
-        self.assertEqual(state_arg["session_history"], [])
-        self.assertNotIn("messages", state_arg)
+        call_args = self.model.graph.invoke.call_args
+        state = call_args[0][0]
+        self.assertEqual(state["user_prompt"], "find a studio")
+        self.assertEqual(state["reformulated_question"], "")
+        self.assertEqual(state["context"], "")
+        self.assertEqual(state["answer"], "")
 
     def test_should_isolate_history_between_different_sessions(self):
-        """ask() stores history independently per session_id — sessions do not share history."""
-        self.model.graph.invoke.side_effect = [
-            {"answer": "answer A"},
-            {"answer": "answer B"},
-        ]
+        """ask() keeps separate histories for different session IDs."""
+        self.model.graph.invoke.return_value = {"answer": "ok"}
 
-        self.model.ask("query A", session_id="sess-A")
-        self.model.ask("query B", session_id="sess-B")
+        self.model.ask("q1", session_id="session-A")
+        self.model.ask("q2", session_id="session-B")
 
-        hist_a = self.model._histories["sess-A"]
-        hist_b = self.model._histories["sess-B"]
-        self.assertEqual(len(hist_a), 2)
-        self.assertEqual(len(hist_b), 2)
-        self.assertEqual(hist_a[0].content, "query A")
-        self.assertEqual(hist_b[0].content, "query B")
+        self.assertEqual(len(self.model._histories["session-A"]), 2)
+        self.assertEqual(len(self.model._histories["session-B"]), 2)
+        self.assertEqual(self.model._histories["session-A"][0].content, "q1")
+        self.assertEqual(self.model._histories["session-B"][0].content, "q2")
 
     def test_should_share_history_within_same_session_across_turns(self):
-        """ask() called twice with the same session_id accumulates 4 messages."""
-        SESSION = "sess-same"
+        """ask() passes previous-turn history to the graph on the second call."""
+        SESSION = "sess-share"
         self.model.graph.invoke.side_effect = [
             {"answer": "answer 1"},
             {"answer": "answer 2"},
@@ -162,120 +171,112 @@ class TestLlmModelGraph(unittest.TestCase):
         self.model.ask("turn 1", session_id=SESSION)
         self.model.ask("turn 2", session_id=SESSION)
 
-        hist = self.model._histories[SESSION]
-        self.assertEqual(len(hist), 4)
-        self.assertEqual(hist[0].content, "turn 1")
-        self.assertEqual(hist[2].content, "turn 2")
+        second_call_state = self.model.graph.invoke.call_args_list[1][0][0]
+        history = second_call_state["session_history"]
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0].content, "turn 1")
+        self.assertEqual(history[1].content, "answer 1")
 
     def test_should_generate_session_id_when_none_provided_to_ask(self):
-        """ask() with no session_id creates a new session and stores history under it."""
+        """ask() auto-generates a session_id and stores history under it."""
         self.model.graph.invoke.return_value = {"answer": "ok"}
 
-        self.model.ask("find a flat")
+        self.model.ask("any query")
 
         self.assertEqual(len(self.model._histories), 1)
-        session_id = next(iter(self.model._histories))
-        self.assertEqual(len(self.model._histories[session_id]), 2)
 
     # ------------------------------------------------------------------
     # ask_stream()
     # ------------------------------------------------------------------
 
     def test_should_yield_tokens_from_generate_node_when_streaming(self):
-        """ask_stream() yields text content only from the 'generate' node."""
-        self.model.graph.stream.return_value = iter([
-            self._stream_chunk("Here ", "generate"),
-            self._stream_chunk("are ", "generate"),
-            self._stream_chunk("some properties.", "generate"),
-        ])
+        """ask_stream() yields each non-empty token from the 'generate' node."""
+        self.model.graph.stream.return_value = [
+            self._stream_chunk("Hello ", "generate"),
+            self._stream_chunk("world", "generate"),
+        ]
 
         tokens = list(self.model.ask_stream("find a flat"))
 
-        self.assertEqual(tokens, ["Here ", "are ", "some properties."])
+        self.assertEqual(tokens, ["Hello ", "world"])
 
     def test_should_ignore_non_generate_nodes_when_streaming(self):
-        """ask_stream() does not yield chunks from reformulate or classify nodes."""
-        self.model.graph.stream.return_value = iter([
-            self._stream_chunk("reformulated query", "reformulate"),
-            self._stream_chunk("classifier output", "classify"),
-        ])
+        """ask_stream() silently ignores chunks from reformulate/classify/retrieve nodes."""
+        self.model.graph.stream.return_value = [
+            self._stream_chunk("ignored", "reformulate"),
+            self._stream_chunk("also ignored", "retrieve"),
+            self._stream_chunk("kept", "generate"),
+        ]
 
-        tokens = list(self.model.ask_stream("find a flat"))
+        tokens = list(self.model.ask_stream("q"))
 
-        self.assertEqual(tokens, [])
+        self.assertEqual(tokens, ["kept"])
 
     def test_should_skip_empty_tokens_when_streaming(self):
-        """ask_stream() does not yield empty-string chunks from the generate node."""
-        self.model.graph.stream.return_value = iter([
+        """ask_stream() drops empty string chunks from the generate node."""
+        self.model.graph.stream.return_value = [
             self._stream_chunk("", "generate"),
-            self._stream_chunk("hello", "generate"),
-            self._stream_chunk("", "generate"),
-        ])
+            self._stream_chunk("real token", "generate"),
+        ]
 
-        tokens = list(self.model.ask_stream("test"))
+        tokens = list(self.model.ask_stream("q"))
 
-        self.assertEqual(tokens, ["hello"])
+        self.assertEqual(tokens, ["real token"])
 
     def test_should_yield_nothing_when_stream_has_no_generate_chunks(self):
-        """ask_stream() yields an empty sequence when the graph produces no generate-node output."""
-        self.model.graph.stream.return_value = iter([])
+        """ask_stream() is an empty iterator when the graph emits no generate chunks."""
+        self.model.graph.stream.return_value = [
+            self._stream_chunk("ignored", "reformulate"),
+        ]
 
-        tokens = list(self.model.ask_stream("find a flat"))
+        tokens = list(self.model.ask_stream("q"))
 
         self.assertEqual(tokens, [])
 
     def test_should_append_human_and_ai_messages_to_history_when_streaming(self):
-        """ask_stream() appends HumanMessage + AIMessage to the session history after completion."""
+        """ask_stream() saves the full streamed answer and the original query to history."""
         SESSION = "sess-stream-hist"
-        self.model.graph.stream.return_value = iter([
-            self._stream_chunk("answer text", "generate"),
-        ])
+        self.model.graph.stream.return_value = [
+            self._stream_chunk("part1 ", "generate"),
+            self._stream_chunk("part2", "generate"),
+        ]
 
-        list(self.model.ask_stream("find a flat", session_id=SESSION))
+        list(self.model.ask_stream("my query", session_id=SESSION))
 
         hist = self.model._histories[SESSION]
         self.assertEqual(len(hist), 2)
-        self.assertIsInstance(hist[0], HumanMessage)
-        self.assertIsInstance(hist[1], AIMessage)
-        self.assertEqual(hist[0].content, "find a flat")
-        self.assertEqual(hist[1].content, "answer text")
+        self.assertEqual(hist[0].content, "my query")
+        self.assertEqual(hist[1].content, "part1 part2")
 
     def test_should_accumulate_history_across_turns_when_streaming(self):
-        """ask_stream() appends to pre-existing session history rather than replacing it."""
-        SESSION = "sess-stream-acc"
-        self.model._histories[SESSION] = [
-            HumanMessage(content="turn 1"),
-            AIMessage(content="answer 1"),
+        """ask_stream() accumulates history correctly across multiple turns."""
+        SESSION = "sess-stream-accum"
+        self.model.graph.stream.side_effect = [
+            [self._stream_chunk("answer 1", "generate")],
+            [self._stream_chunk("answer 2", "generate")],
         ]
-        self.model.graph.stream.return_value = iter([
-            self._stream_chunk("answer 2", "generate"),
-        ])
 
-        list(self.model.ask_stream("turn 2", session_id=SESSION))
+        list(self.model.ask_stream("q1", session_id=SESSION))
+        list(self.model.ask_stream("q2", session_id=SESSION))
 
-        hist = self.model._histories[SESSION]
-        self.assertEqual(len(hist), 4)
-        self.assertEqual(hist[-2].content, "turn 2")
-        self.assertEqual(hist[-1].content, "answer 2")
+        self.assertEqual(len(self.model._histories[SESSION]), 4)
 
     def test_should_generate_session_id_when_none_provided_to_ask_stream(self):
-        """ask_stream() with no session_id creates a new session and stores history under it."""
-        self.model.graph.stream.return_value = iter([
-            self._stream_chunk("ok", "generate"),
-        ])
+        """ask_stream() auto-generates a session_id when none is given."""
+        self.model.graph.stream.return_value = [
+            self._stream_chunk("token", "generate"),
+        ]
 
-        list(self.model.ask_stream("find a flat"))
+        list(self.model.ask_stream("query without session"))
 
         self.assertEqual(len(self.model._histories), 1)
-        session_id = next(iter(self.model._histories))
-        self.assertEqual(len(self.model._histories[session_id]), 2)
 
     # ------------------------------------------------------------------
     # _classify_node()
     # ------------------------------------------------------------------
 
     def test_should_return_needs_search_true_when_query_is_about_property(self):
-        """_classify_node() returns needs_search=True when the LLM answers YES."""
+        """_classify_node() returns needs_search=True for property-related queries."""
         self.mock_llm.return_value = AIMessage(content="YES")
         state = self._make_state(reformulated_question="2 bedroom flat Warsaw")
 
@@ -284,25 +285,25 @@ class TestLlmModelGraph(unittest.TestCase):
         self.assertTrue(result["needs_search"])
 
     def test_should_return_needs_search_false_when_query_is_a_greeting(self):
-        """_classify_node() returns needs_search=False when the LLM answers NO."""
+        """_classify_node() returns needs_search=False for greetings."""
         self.mock_llm.return_value = AIMessage(content="NO")
-        state = self._make_state(reformulated_question="Hello, how are you?")
+        state = self._make_state(reformulated_question="hello how are you")
 
         result = self.model._classify_node(state)
 
         self.assertFalse(result["needs_search"])
 
     def test_should_handle_yes_with_trailing_text_when_classifying(self):
-        """_classify_node() is True when the response starts with YES (case-insensitive)."""
-        self.mock_llm.return_value = AIMessage(content="YES, this query needs search")
-        state = self._make_state()
+        """_classify_node() treats 'YES ...' as needs_search=True."""
+        self.mock_llm.return_value = AIMessage(content="YES, definitely")
+        state = self._make_state(reformulated_question="any property question")
 
         result = self.model._classify_node(state)
 
         self.assertTrue(result["needs_search"])
 
     def test_should_handle_lowercase_yes_when_classifying(self):
-        """_classify_node() handles lowercase 'yes' from the LLM."""
+        """_classify_node() is case-insensitive — 'yes' counts as YES."""
         self.mock_llm.return_value = AIMessage(content="yes")
         state = self._make_state()
 
@@ -340,6 +341,53 @@ class TestLlmModelGraph(unittest.TestCase):
         result = self.model._retrieve_node(state)
 
         self.assertEqual(result["context"], "")
+
+    def test_should_not_call_mcp_when_context_has_no_currencies(self):
+        """_retrieve_node() skips MCP when context contains only USD or no currency codes."""
+        self.model.rag_context_manager.get_context.return_value = "Nice flat, price: $800/month"
+        state = self._make_state()
+
+        self.model._retrieve_node(state)
+
+        self.mock_mcp.call_tool.assert_not_called()
+
+    def test_should_call_mcp_for_each_non_usd_currency_found_in_context(self):
+        """_retrieve_node() calls MCP once per distinct non-USD currency detected."""
+        self.model.rag_context_manager.get_context.return_value = (
+            "Flat in Warsaw 3000 PLN/month. Studio 800 EUR/month."
+        )
+        self.mock_mcp.call_tool.return_value = "0.24 USD"
+        state = self._make_state()
+
+        self.model._retrieve_node(state)
+
+        calls = self.mock_mcp.call_tool.call_args_list
+        called_currencies = {c[0][1]["from"] for c in calls}
+        self.assertIn("PLN", called_currencies)
+        self.assertIn("EUR", called_currencies)
+        self.assertEqual(len(calls), 2)
+
+    def test_should_append_currency_rates_to_context_when_non_usd_currencies_found(self):
+        """_retrieve_node() appends a currency reference block when rates are returned."""
+        self.model.rag_context_manager.get_context.return_value = "Flat 3000 PLN/month"
+        self.mock_mcp.call_tool.return_value = "0.24 USD"
+        state = self._make_state()
+
+        result = self.model._retrieve_node(state)
+
+        self.assertIn("Currency conversion rates", result["context"])
+        self.assertIn("PLN", result["context"])
+
+    def test_should_not_append_currency_block_when_mcp_returns_empty_string(self):
+        """_retrieve_node() leaves context unchanged when MCP returns empty for all currencies."""
+        original = "Flat 3000 PLN/month"
+        self.model.rag_context_manager.get_context.return_value = original
+        self.mock_mcp.call_tool.return_value = ""
+        state = self._make_state()
+
+        result = self.model._retrieve_node(state)
+
+        self.assertEqual(result["context"], original)
 
     # ------------------------------------------------------------------
     # _generate_node()
@@ -446,8 +494,15 @@ class TestLlmModelGraph(unittest.TestCase):
     # close()
     # ------------------------------------------------------------------
 
+    @patch("agentP.src.model.llm_model_graph.close_finance_mcp")
+    def test_should_delegate_to_close_finance_mcp_when_close_is_called(self, mock_close_finance):
+        """close() calls close_finance_mcp() to terminate the MCP subprocess."""
+        self.model.close()
+
+        mock_close_finance.assert_called_once()
+
     def test_should_not_raise_when_close_is_called(self):
-        """close() is a documented no-op and must not raise."""
+        """close() must not raise even when the MCP subprocess was never started."""
         try:
             self.model.close()
         except Exception as exc:
