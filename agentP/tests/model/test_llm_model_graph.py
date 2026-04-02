@@ -75,22 +75,25 @@ class TestLlmModelGraph(unittest.TestCase):
         self.model.graph.invoke.assert_called_once()
 
     def test_should_build_history_from_query_and_answer_when_ask_is_called(self):
-        """ask() appends HumanMessage(user_query) + AIMessage(answer) to self.history."""
+        """ask() appends HumanMessage(user_query) + AIMessage(answer) to the session history."""
+        SESSION = "sess-history-ask"
         self.model.graph.invoke.return_value = {
             "messages": [AIMessage(content="3 listings found.")]
         }
 
-        self.model.ask("find me a flat")
+        self.model.ask("find me a flat", session_id=SESSION)
 
-        self.assertEqual(len(self.model.history), 2)
-        self.assertIsInstance(self.model.history[0], HumanMessage)
-        self.assertIsInstance(self.model.history[1], AIMessage)
-        self.assertEqual(self.model.history[0].content, "find me a flat")
-        self.assertEqual(self.model.history[1].content, "3 listings found.")
+        hist = self.model._histories[SESSION]
+        self.assertEqual(len(hist), 2)
+        self.assertIsInstance(hist[0], HumanMessage)
+        self.assertIsInstance(hist[1], AIMessage)
+        self.assertEqual(hist[0].content, "find me a flat")
+        self.assertEqual(hist[1].content, "3 listings found.")
 
     def test_should_accumulate_history_across_turns_when_asking(self):
-        """ask() appends to pre-existing history rather than replacing it."""
-        self.model.history = [
+        """ask() appends to pre-existing session history rather than replacing it."""
+        SESSION = "sess-accumulate-ask"
+        self.model._histories[SESSION] = [
             HumanMessage(content="turn 1"),
             AIMessage(content="answer 1"),
         ]
@@ -98,25 +101,79 @@ class TestLlmModelGraph(unittest.TestCase):
             "messages": [AIMessage(content="answer 2")]
         }
 
-        self.model.ask("turn 2")
+        self.model.ask("turn 2", session_id=SESSION)
 
-        self.assertEqual(len(self.model.history), 4)
-        self.assertEqual(self.model.history[-2].content, "turn 2")
-        self.assertEqual(self.model.history[-1].content, "answer 2")
+        hist = self.model._histories[SESSION]
+        self.assertEqual(len(hist), 4)
+        self.assertEqual(hist[-2].content, "turn 2")
+        self.assertEqual(hist[-1].content, "answer 2")
 
     def test_should_pass_correct_initial_state_when_ask_is_called(self):
-        """ask() builds a State with user_prompt, empty reformulated_question and messages=[]."""
+        """ask() builds a State with user_prompt, empty reformulated_question, messages=[], and session_history."""
         self.model.graph.invoke.return_value = {"messages": [AIMessage(content="")]}
 
-        self.model.ask("find a flat")
+        self.model.ask("find a flat", session_id="sess-state")
 
         state_arg = self.model.graph.invoke.call_args[0][0]
         self.assertEqual(state_arg["user_prompt"], "find a flat")
         self.assertEqual(state_arg["reformulated_question"], "")
         self.assertEqual(state_arg["messages"], [])
+        self.assertEqual(state_arg["session_history"], [])
         self.assertNotIn("context", state_arg)
         self.assertNotIn("answer", state_arg)
         self.assertNotIn("history", state_arg)
+
+    def test_should_isolate_history_between_different_sessions(self):
+        """ask() stores history independently per session_id — sessions do not share history."""
+        self.model.graph.invoke.side_effect = [
+            {"messages": [AIMessage(content="answer A")]},
+            {"messages": [AIMessage(content="answer B")]},
+        ]
+
+        self.model.ask("query A", session_id="sess-A")
+        self.model.ask("query B", session_id="sess-B")
+
+        hist_a = self.model._histories["sess-A"]
+        hist_b = self.model._histories["sess-B"]
+        self.assertEqual(len(hist_a), 2)
+        self.assertEqual(len(hist_b), 2)
+        self.assertEqual(hist_a[0].content, "query A")
+        self.assertEqual(hist_b[0].content, "query B")
+
+    def test_should_share_history_within_same_session_across_turns(self):
+        """ask() called twice with the same session_id accumulates 4 messages."""
+        SESSION = "sess-same"
+        self.model.graph.invoke.side_effect = [
+            {"messages": [AIMessage(content="answer 1")]},
+            {"messages": [AIMessage(content="answer 2")]},
+        ]
+
+        self.model.ask("turn 1", session_id=SESSION)
+        self.model.ask("turn 2", session_id=SESSION)
+
+        hist = self.model._histories[SESSION]
+        self.assertEqual(len(hist), 4)
+        self.assertEqual(hist[0].content, "turn 1")
+        self.assertEqual(hist[2].content, "turn 2")
+
+    def test_should_generate_session_id_when_none_provided_to_ask(self):
+        """ask() with no session_id creates a new session and stores history under it."""
+        self.model.graph.invoke.return_value = {"messages": [AIMessage(content="ok")]}
+
+        self.model.ask("find a flat")
+
+        self.assertEqual(len(self.model._histories), 1)
+        session_id = next(iter(self.model._histories))
+        self.assertEqual(len(self.model._histories[session_id]), 2)
+
+    def test_should_include_recursion_limit_in_graph_invoke_config(self):
+        """ask() passes recursion_limit=10 in the config to graph.invoke."""
+        self.model.graph.invoke.return_value = {"messages": [AIMessage(content="ok")]}
+
+        self.model.ask("find a flat", session_id="sess-rl")
+
+        config = self.model.graph.invoke.call_args[1]["config"]
+        self.assertEqual(config["recursion_limit"], 10)
 
     # ------------------------------------------------------------------
     # ask_stream()
@@ -187,22 +244,25 @@ class TestLlmModelGraph(unittest.TestCase):
         self.assertEqual(tokens, [])
 
     def test_should_append_human_and_ai_messages_to_history_when_streaming(self):
-        """ask_stream() appends HumanMessage + AIMessage to self.history after completion."""
+        """ask_stream() appends HumanMessage + AIMessage to the session history after completion."""
+        SESSION = "sess-stream-hist"
         self.model.graph.stream.return_value = iter([
             self._stream_chunk("answer text", "agent"),
         ])
 
-        list(self.model.ask_stream("find a flat"))
+        list(self.model.ask_stream("find a flat", session_id=SESSION))
 
-        self.assertEqual(len(self.model.history), 2)
-        self.assertIsInstance(self.model.history[0], HumanMessage)
-        self.assertIsInstance(self.model.history[1], AIMessage)
-        self.assertEqual(self.model.history[0].content, "find a flat")
-        self.assertEqual(self.model.history[1].content, "answer text")
+        hist = self.model._histories[SESSION]
+        self.assertEqual(len(hist), 2)
+        self.assertIsInstance(hist[0], HumanMessage)
+        self.assertIsInstance(hist[1], AIMessage)
+        self.assertEqual(hist[0].content, "find a flat")
+        self.assertEqual(hist[1].content, "answer text")
 
     def test_should_accumulate_history_across_turns_when_streaming(self):
-        """ask_stream() appends to pre-existing history rather than replacing it."""
-        self.model.history = [
+        """ask_stream() appends to pre-existing session history rather than replacing it."""
+        SESSION = "sess-stream-acc"
+        self.model._histories[SESSION] = [
             HumanMessage(content="turn 1"),
             AIMessage(content="answer 1"),
         ]
@@ -210,32 +270,55 @@ class TestLlmModelGraph(unittest.TestCase):
             self._stream_chunk("answer 2", "agent"),
         ])
 
-        list(self.model.ask_stream("turn 2"))
+        list(self.model.ask_stream("turn 2", session_id=SESSION))
 
-        self.assertEqual(len(self.model.history), 4)
-        self.assertEqual(self.model.history[-2].content, "turn 2")
-        self.assertEqual(self.model.history[-1].content, "answer 2")
+        hist = self.model._histories[SESSION]
+        self.assertEqual(len(hist), 4)
+        self.assertEqual(hist[-2].content, "turn 2")
+        self.assertEqual(hist[-1].content, "answer 2")
+
+    def test_should_generate_session_id_when_none_provided_to_ask_stream(self):
+        """ask_stream() with no session_id creates a new session and stores history under it."""
+        self.model.graph.stream.return_value = iter([
+            self._stream_chunk("ok", "agent"),
+        ])
+
+        list(self.model.ask_stream("find a flat"))
+
+        self.assertEqual(len(self.model._histories), 1)
+        session_id = next(iter(self.model._histories))
+        self.assertEqual(len(self.model._histories[session_id]), 2)
+
+    def test_should_include_recursion_limit_in_graph_stream_config(self):
+        """ask_stream() passes recursion_limit=10 in the config to graph.stream."""
+        self.model.graph.stream.return_value = iter([])
+
+        list(self.model.ask_stream("find a flat", session_id="sess-rl-stream"))
+
+        config = self.model.graph.stream.call_args[1]["config"]
+        self.assertEqual(config["recursion_limit"], 10)
 
     # ------------------------------------------------------------------
     # _agent_node()
     # ------------------------------------------------------------------
 
-    def _make_agent_state(self, messages=None, reformulated="2 bedroom Warsaw"):
+    def _make_agent_state(self, messages=None, reformulated="2 bedroom Warsaw", session_history=None):
         """Helper: build a minimal State for _agent_node tests."""
         return {
             "user_prompt": "find a flat",
             "reformulated_question": reformulated,
             "messages": messages if messages is not None else [],
+            "session_history": session_history if session_history is not None else [],
         }
 
     def test_should_build_initial_messages_with_system_prompt_and_history_when_first_agent_call(self):
-        """On first call (empty messages), _agent_node prepends system prompt + history + question."""
-        self.model.history = [
+        """On first call (empty messages), _agent_node prepends system prompt + session_history + question."""
+        prior = [
             HumanMessage(content="prev question"),
             AIMessage(content="prev answer"),
         ]
         self.mock_llm_with_tools.invoke.return_value = AIMessage(content="some answer")
-        state = self._make_agent_state(messages=[], reformulated="2 bed Warsaw")
+        state = self._make_agent_state(messages=[], reformulated="2 bed Warsaw", session_history=prior)
 
         self.model._agent_node(state)
 
@@ -272,15 +355,15 @@ class TestLlmModelGraph(unittest.TestCase):
 
         self.assertEqual(result, {"messages": [response]})
 
-    def test_should_not_modify_self_history_inside_agent_node(self):
-        """_agent_node() must not mutate self.history — history management belongs in ask/ask_stream."""
-        prior = [HumanMessage(content="prior"), AIMessage(content="prior ans")]
-        self.model.history = list(prior)
+    def test_should_not_modify_histories_dict_inside_agent_node(self):
+        """_agent_node() must not mutate self._histories — history management belongs in ask/ask_stream."""
+        self.model._histories["existing"] = [HumanMessage(content="prior")]
+        before = {"existing": list(self.model._histories["existing"])}
         self.mock_llm_with_tools.invoke.return_value = AIMessage(content="response")
 
         self.model._agent_node(self._make_agent_state())
 
-        self.assertEqual(self.model.history, prior)
+        self.assertEqual(self.model._histories, before)
 
     # ------------------------------------------------------------------
     # _reformulate_node()
@@ -295,6 +378,7 @@ class TestLlmModelGraph(unittest.TestCase):
             "user_prompt": "cheap 2 bed Warsaw",
             "reformulated_question": "",
             "messages": [],
+            "session_history": [],
         }
 
         result = self.model._reformulate_node(state)
@@ -314,13 +398,27 @@ class TestLlmModelGraph(unittest.TestCase):
         self.assertEqual(state["user_prompt"], "find me a studio")
 
     def test_should_have_empty_fields_when_building_initial_state(self):
-        """_initial_state() initialises reformulated_question to '' and messages to []."""
+        """_initial_state() initialises reformulated_question='', messages=[], session_history=[]."""
         state = self.model._initial_state("anything")
         self.assertEqual(state["reformulated_question"], "")
         self.assertEqual(state["messages"], [])
+        self.assertEqual(state["session_history"], [])
         self.assertNotIn("context", state)
         self.assertNotIn("answer", state)
         self.assertNotIn("history", state)
+
+    def test_should_include_session_history_in_initial_state(self):
+        """_initial_state() copies the provided history into session_history."""
+        history = [HumanMessage(content="h1"), AIMessage(content="a1")]
+        state = self.model._initial_state("find a flat", history=history)
+        self.assertEqual(state["session_history"], history)
+
+    def test_should_copy_history_so_mutations_do_not_affect_original(self):
+        """_initial_state() makes a copy of history — mutating the state does not affect the source list."""
+        history = [HumanMessage(content="h1")]
+        state = self.model._initial_state("q", history=history)
+        state["session_history"].append(AIMessage(content="extra"))
+        self.assertEqual(len(history), 1)
 
     # ------------------------------------------------------------------
     # close()

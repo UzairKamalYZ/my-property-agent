@@ -32,6 +32,9 @@ os.environ.setdefault("LANGCHAIN_PROJECT", Config.LANGCHAIN_PROJECT)
 if Config.LANGCHAIN_API_KEY:
     os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
 
+# Maximum agent→tools→agent loop iterations before LangGraph raises an error.
+_RECURSION_LIMIT = 10
+
 
 # ------------------- STATE -------------------
 
@@ -39,6 +42,7 @@ class State(TypedDict):
     user_prompt: str
     reformulated_question: str
     messages: Annotated[List[AnyMessage], add_messages]
+    session_history: List[AnyMessage]  # per-session conversation history passed into the graph
 
 
 # ------------------- MODEL -------------------
@@ -51,8 +55,8 @@ class LlmModelGraph:
         self.system_prompt = self._load_file(Config.PROMPT_FILE)
         self.reformulation_template = self._load_file(Config.REFORMULATION_PROMPT)
         self.rag_context_manager = RagContextManager(Embedder())
-        self.history: List = []
-        self.session_id = str(uuid.uuid4())
+        # Per-session history store: {session_id: [HumanMessage, AIMessage, ...]}
+        self._histories: dict[str, list] = {}
         self._property_search_tool = make_property_search_tool(self.rag_context_manager)
         self._llm_with_tools = self.llm.bind_tools([self._property_search_tool])
         self.graph = self._build_graph()
@@ -61,10 +65,18 @@ class LlmModelGraph:
 
     @traceable(name="LlmModelGraph.ask", run_type="chain", tags=["property-agent"])
     def ask(self, user_query: str, session_id: str = None) -> str:
-        state = self._initial_state(user_query)
-        result = self.graph.invoke(state, config={"run_name": "property-rag-pipeline"})
+        if session_id is None:
+            session_id = str(uuid.uuid4())
+            logger.debug("ask: no session_id provided, generated %s", session_id)
+
+        history = self._get_history(session_id)
+        state = self._initial_state(user_query, history)
+        result = self.graph.invoke(
+            state,
+            config={"run_name": "property-rag-pipeline", "recursion_limit": _RECURSION_LIMIT},
+        )
         answer = result["messages"][-1].content
-        self.history = self.history + [
+        self._histories[session_id] = history + [
             HumanMessage(content=user_query),
             AIMessage(content=answer),
         ]
@@ -73,12 +85,17 @@ class LlmModelGraph:
     @traceable(name="LlmModelGraph.ask_stream", run_type="chain", tags=["property-agent", "streaming"])
     def ask_stream(self, user_query: str, session_id: str = None):
         """Yields text token chunks from the agent node, skipping tool-call chunks."""
-        state = self._initial_state(user_query)
+        if session_id is None:
+            session_id = str(uuid.uuid4())
+            logger.debug("ask_stream: no session_id provided, generated %s", session_id)
+
+        history = self._get_history(session_id)
+        state = self._initial_state(user_query, history)
         full_answer = ""
         for chunk, metadata in self.graph.stream(
             state,
             stream_mode="messages",
-            config={"run_name": "property-rag-pipeline-stream"},
+            config={"run_name": "property-rag-pipeline-stream", "recursion_limit": _RECURSION_LIMIT},
         ):
             if (
                 metadata.get("langgraph_node") == "agent"
@@ -88,8 +105,15 @@ class LlmModelGraph:
             ):
                 full_answer += chunk.content
                 yield chunk.content
+            else:
+                logger.debug(
+                    "ask_stream: skipping chunk node=%s has_content=%s tool_calls=%s",
+                    metadata.get("langgraph_node"),
+                    bool(chunk.content),
+                    bool(getattr(chunk, "tool_call_chunks", [])),
+                )
 
-        self.history = self.history + [
+        self._histories[session_id] = history + [
             HumanMessage(content=user_query),
             AIMessage(content=full_answer),
         ]
@@ -125,11 +149,11 @@ class LlmModelGraph:
 
     def _agent_node(self, state: State) -> dict:
         if not state["messages"]:
-            # First call: build message list from system prompt + history + reformulated question
+            # First call: build message list from system prompt + session history + reformulated question
             logger.info("[agent] first call — building messages from history + reformulated question")
             messages = (
                 [SystemMessage(content=self.system_prompt)]
-                + list(self.history)
+                + list(state["session_history"])
                 + [HumanMessage(content=state["reformulated_question"])]
             )
         else:
@@ -143,11 +167,16 @@ class LlmModelGraph:
 
     # ------------------- HELPERS -------------------
 
-    def _initial_state(self, user_query: str) -> State:
+    def _get_history(self, session_id: str) -> list:
+        """Returns the history list for the given session, creating it if absent."""
+        return self._histories.setdefault(session_id, [])
+
+    def _initial_state(self, user_query: str, history: list = None) -> State:
         return {
             "user_prompt": user_query,
             "reformulated_question": "",
             "messages": [],
+            "session_history": list(history) if history else [],
         }
 
     @staticmethod

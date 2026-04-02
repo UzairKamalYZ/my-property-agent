@@ -11,9 +11,28 @@ Two responsibilities:
    that test modules can be collected and imported without them installed.
 """
 
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
+
+# ---------------------------------------------------------------------------
+# 0. Minimal environment variables required by Config at class-body import time
+# ---------------------------------------------------------------------------
+os.environ.setdefault("STORE_TYPE", "local")
+os.environ.setdefault("LLM_MODEL_NAME", "test-model")
+os.environ.setdefault("LLM_PROVIDER", "ollama")
+os.environ.setdefault("LLM_SEED", "42")
+os.environ.setdefault("LLM_TEMPERATURE", "0.0")
+os.environ.setdefault("SENTENCE_TRANSFORMER_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+os.environ.setdefault("MEMORY_FILE", "memory.json")
+os.environ.setdefault("URLS_FILE", "../urls.txt")
+os.environ.setdefault("PINECONE_API_KEY", "test-key")
+os.environ.setdefault("PINECONE_ENVIRONMENT", "test-env")
+os.environ.setdefault("PINECONE_INDEX_NAME", "test-index")
+os.environ.setdefault("PROMPT_FILE", "agentP/prompts/System_Prompt.txt")
+os.environ.setdefault("INTERACTION_FILE", "agentP/prompts/interaction.json")
+os.environ.setdefault("REFORMULATION_PROMPT", "agentP/prompts/reformulated_prompt.txt")
 
 # ---------------------------------------------------------------------------
 # 1. Path fix
