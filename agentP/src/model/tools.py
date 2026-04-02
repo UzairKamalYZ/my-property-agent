@@ -1,9 +1,29 @@
 import logging
 
 from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, Field
 
 from ..config.config import Config
 from .rag_context_manager import RagContextManager
+
+
+class _PropertySearchInput(BaseModel):
+    """Input schema for the property_search tool.
+
+    An explicit Pydantic schema ensures the LLM always receives a correctly-typed
+    object schema (not a bare string schema), which prevents the validation error
+    "input must be a valid string" that occurs when the LLM passes a JSON object
+    to a tool that was only declared to accept a plain str.
+    """
+
+    query: str = Field(
+        description=(
+            "The property search query in natural language. "
+            "Examples: '2 bedroom flat in Warsaw under €800', "
+            "'studio apartment near city centre', "
+            "'3-room house with garden to rent'."
+        )
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -46,4 +66,5 @@ def make_property_search_tool(rag_context_manager: RagContextManager) -> Structu
         func=_search,
         name="property_search",
         description=_TOOL_DESCRIPTION,
+        args_schema=_PropertySearchInput,
     )

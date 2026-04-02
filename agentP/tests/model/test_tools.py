@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from agentP.src.model.tools import make_property_search_tool, _TOOL_DESCRIPTION
+from agentP.src.model.tools import make_property_search_tool, _TOOL_DESCRIPTION, _PropertySearchInput
 
 
 class TestMakePropertySearchTool(unittest.TestCase):
@@ -96,6 +96,27 @@ class TestMakePropertySearchTool(unittest.TestCase):
             [],
             msg=f"Missing words in tool description: {missing}",
         )
+
+    # ------------------------------------------------------------------
+    # Explicit args_schema (prevents "input must be valid string" error)
+    # ------------------------------------------------------------------
+
+    def test_should_use_explicit_args_schema(self):
+        """Tool has an explicit args_schema so the LLM receives an object schema, not a bare string."""
+        tool = make_property_search_tool(self.mock_rag)
+        self.assertIs(tool.args_schema, _PropertySearchInput)
+
+    def test_should_have_query_field_in_args_schema(self):
+        """args_schema declares a required 'query' field of type str."""
+        fields = _PropertySearchInput.model_fields
+        self.assertIn("query", fields)
+        self.assertEqual(fields["query"].annotation, str)
+
+    def test_should_have_query_description_in_args_schema(self):
+        """args_schema 'query' field has a description so the LLM knows what to pass."""
+        field = _PropertySearchInput.model_fields["query"]
+        self.assertIsNotNone(field.description)
+        self.assertGreater(len(field.description), 0)
 
 
 if __name__ == "__main__":
