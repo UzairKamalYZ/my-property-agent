@@ -12,12 +12,18 @@ Responsibilities:
 """
 
 import sys
+import importlib.machinery
 from unittest.mock import MagicMock
 
 
 def _stub(name: str) -> MagicMock:
-    """Register a MagicMock in sys.modules and return it."""
+    """Register a MagicMock in sys.modules and return it.
+
+    Sets __spec__ to a real ModuleSpec so that importlib.util.find_spec()
+    does not raise ValueError (Python 3.13 + transformers compatibility).
+    """
     mock = MagicMock()
+    mock.__spec__ = importlib.machinery.ModuleSpec(name, None)
     sys.modules[name] = mock
     return mock
 

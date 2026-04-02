@@ -6,14 +6,15 @@ A conversational AI system for property search. Users describe what they're look
 
 ## Features
 
-- **LangGraph RAG Pipeline** — three-node graph: reformulate → retrieve → generate
+- **LangGraph RAG Pipeline** — four-node graph with conditional retrieval: reformulate → classify → [retrieve →] generate
+- **Conditional RAG** — an LLM classifier decides per-query whether to hit the vector store; greetings and follow-ups skip retrieval entirely
 - **Streaming responses** — token-by-token output via SSE (REST) or live message edits (Telegram)
-- **Conversation memory** — in-memory history threaded through every graph invocation
+- **Conversation memory** — per-session history threaded through every graph invocation
 - **Multiple clients** — REST API, Streamlit UI, Telegram bot, scheduled cron job
 - **Pluggable vector store** — FAISS (local) or Pinecone (cloud), switched via config
 - **LangSmith observability** — every run traced with `@traceable`
 - **Web scraping** — ingest listings from URLs or CSV files
-- **87 tests** — TDD-style naming (`test_should_<result>_when_<condition>`) across all layers
+- **108 tests** — TDD-style naming (`test_should_<result>_when_<condition>`) across all layers
 
 ---
 
@@ -30,7 +31,8 @@ LocalAgent.ask(prompt, stream)
   ▼
 LlmModelGraph
   ├── [reformulate]  user_prompt → reformulated_question   (LLM)
-  ├── [retrieve]     reformulated_question → context        (vector search)
+  ├── [classify]     reformulated_question → needs_search  (LLM YES/NO)
+  ├── [retrieve]     reformulated_question → context        (vector search, only when needs_search=True)
   └── [generate]     question + context + history → answer  (LLM)
   │
   ▼
@@ -40,32 +42,18 @@ Response (blocking string or token stream)
 ### LangGraph pipeline (`agentP/src/model/llm_model_graph.py`)
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   LlmModelGraph                     │
-│                                                     │
-│   user_prompt                                       │
-│       │                                             │
-│       ▼                                             │
-│  ┌──────────┐   reformulated_question  ┌──────────┐ │
-│  │ REFORMU- │ ────────────────────────▶│ RETRIEVE │ │
-│  │   LATE   │                          │  (FAISS  │ │
-│  └──────────┘                          │ /Pinecone)│ │
-│                                        └──────────┘ │
-│                                             │       │
-│                                          context    │
-│                                             │       │
-│                                             ▼       │
-│                                       ┌──────────┐  │
-│                                       │ GENERATE │  │
-│                                       │ system   │  │
-│                                       │ prompt + │  │
-│                                       │ history  │  │
-│                                       │ + context│  │
-│                                       └──────────┘  │
-│                                             │       │
-│                                          answer     │
-└─────────────────────────────────────────────────────┘
+START → reformulate → classify ──(needs_search=True)──► retrieve → generate → END
+                               └──(needs_search=False)──► generate → END
 ```
+
+| Node | Input | Output |
+|---|---|---|
+| `reformulate` | `user_prompt` | `reformulated_question` |
+| `classify` | `reformulated_question` | `needs_search` (bool) |
+| `retrieve` | `reformulated_question` | `context` (formatted listings) |
+| `generate` | `reformulated_question` + `context` + `session_history` | `answer` |
+
+The `classify` node prompts the LLM for a plain YES/NO decision. Only queries about finding, renting, buying, or comparing properties route to `retrieve`. Greetings, follow-ups, and general questions go directly to `generate` — the vector store is never touched unnecessarily.
 
 ### Client layer (`clients/`)
 
@@ -103,8 +91,9 @@ my-property-agent/
 │   │   ├── config/
 │   │   │   └── config.py            # Centralised settings loaded from .env
 │   │   ├── model/
-│   │   │   ├── llm_factory.py       # Creates the LLM (Ollama, OpenAI, …)
-│   │   │   ├── llm_model_graph.py   # LangGraph RAG pipeline
+│   │   │   ├── llm_factory.py       # Creates the LLM (Ollama via OpenAI-compatible API)
+│   │   │   ├── llm_model_graph.py   # LangGraph RAG pipeline (4-node conditional graph)
+│   │   │   ├── tools.py             # make_property_search_tool() factory
 │   │   │   ├── embedder.py          # SentenceTransformer embeddings
 │   │   │   ├── rag_context_manager.py  # Vector search → formatted context
 │   │   │   ├── context_builder.py   # Formats listing dicts as readable text
@@ -132,8 +121,9 @@ my-property-agent/
 │   └── tests/
 │       ├── conftest.py              # sys.path fix + heavy-package stubs
 │       └── model/
-│           ├── test_embedder.py     # 17 tests
-│           └── test_llm_model_graph.py  # 22 tests
+│           ├── test_embedder.py         # 17 tests
+│           ├── test_llm_model_graph.py  # 32 tests
+│           └── test_tools.py            # 11 tests
 │
 ├── clients/
 │   ├── base.py                      # BaseClient ABC
@@ -152,10 +142,10 @@ my-property-agent/
 │   └── tests/
 │       ├── conftest.py              # agentP.src.agent stub + third-party stubs
 │       ├── test_base_client.py      # 6 tests
-│       ├── test_rest_client.py      # 9 tests
-│       ├── test_cron_client.py      # 9 tests
+│       ├── test_rest_client.py      # 12 tests
+│       ├── test_cron_client.py      # 10 tests
 │       ├── test_telegram_client.py  # 9 tests
-│       └── test_streamlit_client.py # 9 tests (+ 4 _get_agent_response tests)
+│       └── test_streamlit_client.py # 11 tests
 │
 └── logs/
     └── agent.log                    # Unified runtime log (all clients)
@@ -170,11 +160,14 @@ All settings live in `.env` at the project root. Loaded automatically by `agentP
 | Variable | Default | Description |
 |---|---|---|
 | `LLM_PROVIDER` | `ollama` | LLM backend (`ollama` is the only supported provider) |
-| `LLM_MODEL_NAME` | `llama3.2` | Ollama model name |
+| `LLM_MODEL_NAME` | `llama3.2` | Model name passed to the LLM endpoint |
 | `LLM_TEMPERATURE` | `0.0` | Deterministic output |
 | `LLM_SEED` | `365` | Reproducibility seed |
+| `AI_PROVIDER_BASE_URL` | `http://localhost:11434/v1` | OpenAI-compatible LLM endpoint (Ollama default) |
+| `AI_PROVIDER_API_KEY` | `ollama` | API key for the LLM endpoint |
 | `STORE_TYPE` | `pinecone` | `local` (FAISS) or `pinecone` |
 | `SENTENCE_TRANSFORMER_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
+| `RAG_K` | `5` | Number of listings to retrieve per vector search |
 | `PINECONE_API_KEY` | _(required for cloud)_ | Pinecone API key |
 | `PINECONE_INDEX_NAME` | `property-agent` | Pinecone index name |
 | `PROMPT_FILE` | `agentP/src/prompts/System_Prompt.txt` | Agent system prompt path |
@@ -317,10 +310,10 @@ python -m agentP.src.gatherers.data_collector
 ## Testing
 
 ```bash
-# All tests (87 total)
+# All tests (108 total)
 python -m pytest agentP/tests/ clients/tests/ -v
 
-# agentP core only (39 tests)
+# agentP core only (60 tests)
 python -m pytest agentP/tests/ -v
 
 # Client layer only (48 tests)
@@ -344,7 +337,7 @@ LANGCHAIN_API_KEY=<your-key>
 LANGCHAIN_PROJECT=my-property-agent
 ```
 
-Every `ask()` and `ask_stream()` call is decorated with `@traceable` and produces a trace with three child spans — `reformulate`, `retrieve`, and `generate` — visible at [smith.langchain.com](https://smith.langchain.com).
+Every `ask()` and `ask_stream()` call is decorated with `@traceable` and produces a trace with four child spans — `reformulate`, `classify`, `retrieve` (conditional), and `generate` — visible at [smith.langchain.com](https://smith.langchain.com).
 
 ---
 

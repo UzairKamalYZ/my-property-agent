@@ -1,40 +1,27 @@
-import json
 import logging
 import os
 import uuid
-from typing import Annotated, List, TypedDict
+from typing import List, TypedDict
 
 logger = logging.getLogger(__name__)
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import (
-    HumanMessage,
-    AIMessage,
-    SystemMessage,
-    AIMessageChunk,
-    AnyMessage,
-)
+from langchain_core.messages import HumanMessage, AIMessage, AnyMessage
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langsmith import traceable
 
 from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode, tools_condition
 
 from ..config.config import Config
 from .embedder import Embedder
 from .rag_context_manager import RagContextManager
-from .tools import make_property_search_tool
 
 # LangSmith picks these up automatically from the environment
 os.environ.setdefault("LANGCHAIN_TRACING_V2", Config.LANGCHAIN_TRACING_V2)
 os.environ.setdefault("LANGCHAIN_PROJECT", Config.LANGCHAIN_PROJECT)
 if Config.LANGCHAIN_API_KEY:
     os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
-
-# Maximum agent→tools→agent loop iterations before LangGraph raises an error.
-_RECURSION_LIMIT = 10
 
 
 # ------------------- STATE -------------------
@@ -47,31 +34,33 @@ class State(TypedDict):
     ------
     user_prompt : str
         The raw, unmodified question typed by the user.
-        Set once at the start of each turn and never changed afterwards.
 
     reformulated_question : str
-        A rewritten version of user_prompt produced by the 'reformulate' node.
-        Better phrased for vector search and LLM consumption.
-        Starts as an empty string and is filled in by _reformulate_node.
+        A rewritten version of user_prompt produced by the 'reformulate' node,
+        better phrased for vector search and LLM consumption.
 
-    messages : List[AnyMessage]  (append-only via add_messages reducer)
-        The growing list of LangChain messages exchanged between the agent
-        and the tool layer during a single turn:
-          SystemMessage  →  HumanMessage  →  AIMessage (tool call)
-          →  ToolMessage (tool result)  →  AIMessage (final answer)
-        LangGraph's add_messages reducer appends new messages automatically
-        instead of replacing the list on each node return.
+    needs_search : bool
+        Set by the 'classify' node. True → the 'retrieve' node runs and
+        injects property listings into the prompt. False → 'generate' runs
+        directly without touching the vector store.
+
+    context : str
+        Formatted property listings returned by the 'retrieve' node.
+        Empty string when needs_search is False.
+
+    answer : str
+        The final text answer produced by the 'generate' node.
 
     session_history : List[AnyMessage]
-        Previous turns from this user's session (HumanMessage + AIMessage pairs).
-        Injected at the start of the turn so the agent can reference earlier
-        context. Managed externally by ask() / ask_stream() and stored in
-        self._histories; the graph itself never writes to this field.
+        Previous turns for this session (HumanMessage + AIMessage pairs).
+        Passed in at the start of each turn; the graph never writes to it.
     """
 
     user_prompt: str
     reformulated_question: str
-    messages: Annotated[List[AnyMessage], add_messages]
+    needs_search: bool
+    context: str
+    answer: str
     session_history: List[AnyMessage]
 
 
@@ -79,75 +68,41 @@ class State(TypedDict):
 
 class LlmModelGraph:
     """
-    A LangGraph-based conversational agent for property search.
+    LangGraph pipeline: reformulate → classify → [retrieve →] generate.
 
-    How it works — the graph executes these steps in order for every user turn:
-
-        START
-          │
-          ▼
-        [reformulate]
-          Rewrites the user's raw query into a better-phrased search question
-          using the LLM and the reformulation prompt template.
-          │
-          ▼
-        [agent]
-          Calls the LLM with the property_search tool available.
-          On the FIRST call it assembles the full message list:
-            system prompt + session history + reformulated question.
-          The LLM decides whether to search for listings or answer directly.
-          │
-          ├── LLM requested a tool call?
-          │       YES → [tools] → back to [agent]  (may loop up to _RECURSION_LIMIT times)
-          │       NO  → END
-          ▼
-        [tools]  (ToolNode)
-          Executes the property_search tool: embeds the query, searches the
-          vector store, and returns formatted listing text as a ToolMessage.
-          Control returns to [agent] so the LLM can read the results and reply.
+    Graph topology
+    --------------
+    START → reformulate → classify ──(needs_search=True)──► retrieve → generate → END
+                                   └──(needs_search=False)──► generate → END
 
     Key design decisions
     --------------------
-    - RAG is OPTIONAL: the LLM only calls the search tool when the query is
-      about properties. Simple greetings or follow-up questions skip RAG entirely.
-    - Per-session history: each session_id has its own conversation list stored
-      in self._histories so multiple concurrent users stay fully isolated.
-    - Recursion limit: the agent→tools loop is capped at _RECURSION_LIMIT
-      iterations to prevent infinite loops if the LLM keeps calling the tool.
+    - Conditional RAG: the classify node uses the LLM for a plain YES/NO
+      decision on whether the query needs a property database search.
+      Greetings, follow-ups, and general questions skip retrieval entirely.
+
+    - No tool-calling API: local LLMs exposed via OpenAI-compatible endpoints
+      (e.g. Ollama /v1) do not reliably produce structured tool_calls — they
+      often output the call as JSON text or ignore the schema entirely.
+      Explicit conditional routing is deterministic and model-agnostic.
+
+    - Per-session history: each session_id has its own conversation list
+      stored in self._histories so multiple concurrent users stay isolated.
     """
 
     def __init__(self, llm: BaseChatModel):
-        """
-        Initialise the agent and compile the LangGraph pipeline.
-
-        Steps
-        -----
-        1. Load the system prompt and reformulation template from disk.
-        2. Create the RAG layer (Embedder + RagContextManager).
-        3. Initialise the per-session history store (empty dict).
-        4. Build the property_search tool and bind it to the LLM so the
-           LLM knows it can call it.
-        5. Compile the StateGraph into an executable pipeline.
-        """
         self.llm = llm
 
-        # Step 1 — load prompt files from paths configured in .env
+        # Load prompt files from paths configured in .env
         self.system_prompt = self._load_file(Config.PROMPT_FILE)
         self.reformulation_template = self._load_file(Config.REFORMULATION_PROMPT)
 
-        # Step 2 — RAG layer: SentenceTransformer embeddings + vector store search
+        # RAG layer: SentenceTransformer embeddings + vector store search
         self.rag_context_manager = RagContextManager(Embedder())
 
-        # Step 3 — in-memory store keyed by session_id: {session_id: [msg, msg, ...]}
+        # In-memory session store keyed by session_id: {session_id: [msg, ...]}
         self._histories: dict[str, list] = {}
 
-        # Step 4 — create the tool and bind it to the LLM.
-        # bind_tools() adds the tool schema to every LLM call so the model knows
-        # it can call property_search when a user asks about listings.
-        self._property_search_tool = make_property_search_tool(self.rag_context_manager)
-        self._llm_with_tools = self.llm.bind_tools([self._property_search_tool])
-
-        # Step 5 — compile the graph (nodes + edges are wired in _build_graph)
         self.graph = self._build_graph()
 
     # ------------------- PUBLIC API -------------------
@@ -156,45 +111,16 @@ class LlmModelGraph:
     def ask(self, user_query: str, session_id: str = None) -> str:
         """
         Run the full pipeline and return the final answer as a string (blocking).
-
-        Flow
-        ----
-        1. Resolve the session — generate a UUID if no session_id is given.
-        2. Retrieve this session's conversation history from self._histories.
-        3. Build the initial State and run graph.invoke() (runs all nodes
-           synchronously and returns the final state).
-        4. Extract the answer from the last message in the returned state.
-        5. Append the user query + answer to the session history for next turn.
-
-        Parameters
-        ----------
-        user_query  : The user's raw question.
-        session_id  : Optional identifier to maintain conversation continuity.
-                      If None, a new session UUID is generated automatically.
-
-        Returns
-        -------
-        The agent's final text answer.
         """
-        # Step 1 — ensure we always have a session_id to key history against
         if session_id is None:
             session_id = str(uuid.uuid4())
             logger.debug("ask: no session_id provided, generated %s", session_id)
 
-        # Step 2 — fetch existing history (empty list for a brand-new session)
         history = self._get_history(session_id)
-
-        # Step 3 — pack into a State dict and run the compiled graph
         state = self._initial_state(user_query, history)
-        result = self.graph.invoke(
-            state,
-            config={"run_name": "property-rag-pipeline", "recursion_limit": _RECURSION_LIMIT},
-        )
+        result = self.graph.invoke(state, config={"run_name": "property-rag-pipeline"})
+        answer = result["answer"]
 
-        # Step 4 — the last message is always the agent's final text reply
-        answer = result["messages"][-1].content
-
-        # Step 5 — persist the new turn so the next call can reference it
         self._histories[session_id] = history + [
             HumanMessage(content=user_query),
             AIMessage(content=answer),
@@ -204,27 +130,10 @@ class LlmModelGraph:
     @traceable(name="LlmModelGraph.ask_stream", run_type="chain", tags=["property-agent", "streaming"])
     def ask_stream(self, user_query: str, session_id: str = None):
         """
-        Run the full pipeline and yield text tokens as they are generated (streaming).
+        Run the full pipeline and yield text tokens as they are generated.
 
-        Only chunks that come from the 'agent' node and carry plain text content
-        are yielded. The following chunk types are silently skipped:
-          - Chunks from 'reformulate' or 'tools' nodes (internal pipeline steps)
-          - Empty-content chunks (LangChain emits these as padding)
-          - Tool-call chunks (the raw JSON the LLM uses to invoke a tool)
-
-        After the stream is exhausted the full answer is assembled from the
-        collected tokens and saved to the session history exactly like ask().
-
-        Parameters
-        ----------
-        user_query  : The user's raw question.
-        session_id  : Optional identifier to maintain conversation continuity.
-
-        Yields
-        ------
-        str — individual text token chunks from the agent's final response.
+        Only chunks from the 'generate' node with non-empty content are yielded.
         """
-        # Resolve session — same logic as ask()
         if session_id is None:
             session_id = str(uuid.uuid4())
             logger.debug("ask_stream: no session_id provided, generated %s", session_id)
@@ -233,31 +142,17 @@ class LlmModelGraph:
         state = self._initial_state(user_query, history)
         full_answer = ""
 
-        # graph.stream() with stream_mode="messages" yields (chunk, metadata) pairs.
-        # metadata["langgraph_node"] identifies which node produced the chunk.
         for chunk, metadata in self.graph.stream(
             state,
             stream_mode="messages",
-            config={"run_name": "property-rag-pipeline-stream", "recursion_limit": _RECURSION_LIMIT},
+            config={"run_name": "property-rag-pipeline-stream"},
         ):
-            if (
-                metadata.get("langgraph_node") == "agent"   # only the agent's words
-                and isinstance(chunk, AIMessageChunk)        # typed text chunk
-                and chunk.content                            # non-empty
-                and not chunk.tool_call_chunks               # not a tool invocation
-            ):
-                full_answer += chunk.content
-                yield chunk.content
-            else:
-                # Log skipped chunks so production traces show why tokens were dropped
-                logger.debug(
-                    "ask_stream: skipping chunk node=%s has_content=%s tool_calls=%s",
-                    metadata.get("langgraph_node"),
-                    bool(chunk.content),
-                    bool(getattr(chunk, "tool_call_chunks", [])),
-                )
+            if metadata.get("langgraph_node") == "generate" and hasattr(chunk, "content"):
+                token = chunk.content
+                if token:
+                    full_answer += token
+                    yield token
 
-        # Persist the completed turn to session history
         self._histories[session_id] = history + [
             HumanMessage(content=user_query),
             AIMessage(content=full_answer),
@@ -270,220 +165,123 @@ class LlmModelGraph:
     # ------------------- GRAPH CONSTRUCTION -------------------
 
     def _build_graph(self):
-        """
-        Wire up the LangGraph StateGraph and compile it into an executable pipeline.
-
-        Graph topology
-        --------------
-        START → reformulate → agent ──(has tool call?)──► tools → agent
-                                    └──(no tool call)──► END
-
-        Nodes
-        -----
-        reformulate : _reformulate_node  — rewrites the user query
-        agent       : _agent_node        — LLM reasoning + tool decision
-        tools       : ToolNode           — executes the property_search tool
-
-        Edges
-        -----
-        START → reformulate          Always start with query reformulation.
-        reformulate → agent          Hand the rewritten query to the agent.
-        agent → tools_condition      LangGraph's built-in router: checks whether
-                                     the last AIMessage contains tool_calls.
-                                     If yes → routes to "tools"; if no → END.
-        tools → agent                After the tool runs, return to the agent
-                                     so it can read the result and answer.
-        """
         graph = StateGraph(State)
 
-        # Register the three nodes
         graph.add_node("reformulate", self._reformulate_node)
-        graph.add_node("agent", self._agent_node)
-        graph.add_node("tools", ToolNode([self._property_search_tool]))
+        graph.add_node("classify", self._classify_node)
+        graph.add_node("retrieve", self._retrieve_node)
+        graph.add_node("generate", self._generate_node)
 
-        # Wire the edges
         graph.add_edge(START, "reformulate")
-        graph.add_edge("reformulate", "agent")
-        graph.add_conditional_edges("agent", tools_condition)  # routes to "tools" or END
-        graph.add_edge("tools", "agent")  # loop back after tool execution
+        graph.add_edge("reformulate", "classify")
+        graph.add_conditional_edges(
+            "classify",
+            lambda state: "retrieve" if state["needs_search"] else "generate",
+        )
+        graph.add_edge("retrieve", "generate")
+        graph.add_edge("generate", END)
 
         return graph.compile()
 
     # ------------------- NODES -------------------
 
     def _reformulate_node(self, state: State) -> dict:
-        """
-        STEP 1 — Query reformulation.
-
-        Takes the raw user_prompt and rewrites it into a cleaner, more
-        search-friendly question using the LLM and the reformulation prompt
-        template (loaded from Config.REFORMULATION_PROMPT).
-
-        Why this step?
-        The user might ask something vague like "something cheap with 2 rooms".
-        The LLM rewrites this into "2 bedroom apartment affordable price" which
-        produces much better vector search results downstream.
-
-        Input state keys used  : user_prompt
-        Output state keys set  : reformulated_question
-        """
+        """Rewrite the raw user query into a cleaner, search-friendly question."""
         logger.info("[reformulate] input: %s", state["user_prompt"])
-
-        # Build a simple chain: prompt template → LLM → plain string output
         prompt = ChatPromptTemplate.from_template(self.reformulation_template)
         chain = prompt | self.llm | StrOutputParser()
         reformulated = chain.invoke({"user_prompt": state["user_prompt"]})
-
         logger.info("[reformulate] output: %s", reformulated)
-        # Returning a dict updates only the listed keys in the shared State
         return {"reformulated_question": reformulated}
 
-    def _agent_node(self, state: State) -> dict:
+    def _classify_node(self, state: State) -> dict:
         """
-        STEP 2 (and STEP 4 if tool was called) — LLM reasoning.
+        Decide whether the query requires a property database search.
 
-        This node is called in two distinct situations:
-
-        First call  (state["messages"] is empty)
-            Assembles the full message list for this turn:
-              [SystemMessage]         ← agent persona and instructions
-              + [session_history]     ← previous turns (HumanMessage+AIMessage pairs)
-              + [HumanMessage]        ← the reformulated question for this turn
-            The LLM with tools bound then decides:
-              a) Call property_search → returns an AIMessage with tool_calls
-              b) Answer directly      → returns an AIMessage with plain text
-
-        Subsequent call  (state["messages"] is non-empty, after tool execution)
-            The accumulated messages list already contains the tool result
-            (a ToolMessage appended by ToolNode), so it is passed directly
-            to the LLM. The LLM reads the search results and writes the
-            final answer as plain text.
-
-        Input state keys used  : messages, session_history, reformulated_question
-        Output state keys set  : messages  (appended via add_messages reducer)
+        Prompts the LLM for a plain YES/NO answer. Only YES routes to the
+        retrieve node; everything else goes directly to generate so the
+        vector store is never touched unnecessarily.
         """
-        if not state["messages"]:
-            # First call — build the full context for this turn
-            logger.info("[agent] first call — building messages from history + reformulated question")
-            messages = (
-                [SystemMessage(content=self.system_prompt)]
-                + list(state["session_history"])   # prior turns give conversational context
-                + [HumanMessage(content=state["reformulated_question"])]
-            )
-        else:
-            # Subsequent call — tool result is already in the messages list
-            logger.info("[agent] subsequent call — %d messages in context", len(state["messages"]))
-            messages = state["messages"]
+        logger.info("[classify] question: %s", state["reformulated_question"])
+        prompt = ChatPromptTemplate.from_template(
+            "You are a query router. Decide whether the following query requires "
+            "searching a property listings database.\n\n"
+            "Answer YES only if the user is asking about:\n"
+            "- Finding, renting, buying, or viewing properties\n"
+            "- Apartments, houses, flats, or rooms\n"
+            "- Property prices, locations, or features\n\n"
+            "Answer NO for everything else:\n"
+            "- Greetings (hi, hello, thanks, etc.)\n"
+            "- General questions not about property\n"
+            "- Follow-up questions about a previous answer\n\n"
+            "Respond with ONLY the word YES or NO.\n\n"
+            "Query: {query}"
+        )
+        chain = prompt | self.llm | StrOutputParser()
+        result = chain.invoke({"query": state["reformulated_question"]})
+        needs_search = result.strip().upper().startswith("YES")
+        logger.info("[classify] needs_search=%s (raw=%r)", needs_search, result.strip())
+        return {"needs_search": needs_search}
 
-        # Invoke the tool-aware LLM; response is either a tool call or the final answer
-        response = self._llm_with_tools.invoke(messages)
-        logger.info("[agent] has_tool_calls: %s", bool(getattr(response, "tool_calls", [])))
+    def _retrieve_node(self, state: State) -> dict:
+        """Search the vector store and return formatted property listings as context."""
+        logger.info("[retrieve] querying with: %s", state["reformulated_question"])
+        context = self.rag_context_manager.get_context(state["reformulated_question"])
+        logger.info("[retrieve] context length: %d chars", len(context))
+        return {"context": context}
 
-        # Fallback: some local models (e.g. llama3.2 via Ollama) output a JSON
-        # tool-call description as plain text instead of using native function
-        # calling.  Detect that pattern and convert it into a proper AIMessage
-        # with tool_calls so LangGraph routes to the tools node as intended.
-        if not response.tool_calls and response.content:
-            parsed = self._try_parse_text_tool_call(response.content)
-            if parsed:
-                logger.warning(
-                    "[agent] LLM output tool call as text — converting to native call: %s",
-                    parsed,
-                )
-                response = AIMessage(
-                    content="",
-                    tool_calls=[{
-                        "name": parsed["name"],
-                        "args": parsed["args"],
-                        "id": str(uuid.uuid4()),
-                    }],
-                )
+    def _generate_node(self, state: State) -> dict:
+        """
+        Generate the final answer using the LLM.
 
-        # Returning {"messages": [response]} triggers the add_messages reducer,
-        # which appends the response to state["messages"] rather than replacing it
-        return {"messages": [response]}
+        Builds a prompt from the system instructions, session history, and the
+        reformulated question. When context is present (needs_search=True path)
+        it is added as a second system message *before* the conversation turns
+        so that it sits in the model's context before the human question.
+
+        Context is embedded directly into the message string rather than via a
+        {context} template variable to avoid KeyError when property listings
+        contain literal curly braces (e.g. in addresses or JSON snippets).
+        """
+        logger.info(
+            "[generate] history_turns=%d has_context=%s",
+            len(state["session_history"]),
+            bool(state["context"]),
+        )
+        messages = [("system", self.system_prompt)]
+        if state["context"]:
+            messages.append(("system", f"Relevant property listings:\n{state['context']}"))
+        messages.append(MessagesPlaceholder(variable_name="history"))
+        messages.append(("human", "{question}"))
+
+        prompt = ChatPromptTemplate.from_messages(messages)
+        formatted = prompt.invoke({
+            "question": state["reformulated_question"],
+            "history": state["session_history"],
+        })
+        response = self.llm.invoke(formatted)
+        answer = response.content if hasattr(response, "content") else str(response)
+        logger.debug("[generate] raw response type=%s content_head=%r", type(response).__name__, answer[:200])
+        logger.info("[generate] answer length: %d chars", len(answer))
+        return {"answer": answer}
 
     # ------------------- HELPERS -------------------
 
-    @staticmethod
-    def _try_parse_text_tool_call(content: str) -> dict | None:
-        """
-        Attempt to parse a tool call that the LLM printed as JSON text instead of
-        making a native function call.
-
-        Some smaller local models (e.g. llama3.2 via Ollama) do not reliably use
-        the OpenAI function-calling wire format.  Instead they produce text like:
-
-            {"name": "property_search", "parameters": {"query": "2 bed Warsaw"}}
-
-        or, when they echo the Pydantic schema back as the value:
-
-            {"name": "property_search", "parameters": {
-                "query": {"type": "string", "description": "...", "value": "2 bed Warsaw"}
-            }}
-
-        This method extracts the tool name and the `query` string from both
-        variants and returns {"name": ..., "args": {"query": ...}}, or None if
-        the content is not a recognisable tool call.
-
-        Only the `property_search` tool is supported because it is the only tool
-        registered in this graph.
-        """
-        if not content:
-            return None
-        try:
-            # Strip markdown code fences if the model wrapped the JSON
-            text = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-            data = json.loads(text)
-        except (json.JSONDecodeError, AttributeError):
-            return None
-
-        if not isinstance(data, dict) or data.get("name") != "property_search":
-            return None
-
-        # Query can be nested under "parameters", "arguments", or "args"
-        params = data.get("parameters") or data.get("arguments") or data.get("args") or {}
-        query = params.get("query", "")
-
-        # Handle the case where the LLM echoed the Pydantic Field schema:
-        # {"type": "string", "description": "...", "value": "actual query"}
-        if isinstance(query, dict):
-            query = query.get("value") or query.get("default") or ""
-
-        query = str(query).strip()
-        if not query:
-            return None
-
-        return {"name": "property_search", "args": {"query": query}}
-
     def _get_history(self, session_id: str) -> list:
-        """
-        Return the conversation history list for session_id.
-        Creates an empty list for new sessions using dict.setdefault so the
-        first call for any session_id is safe without an explicit check.
-        """
+        """Return the history list for session_id, creating an empty one if new."""
         return self._histories.setdefault(session_id, [])
 
     def _initial_state(self, user_query: str, history: list = None) -> State:
-        """
-        Build a fresh State dict for the start of a new turn.
-
-        user_prompt           ← the raw user query (unchanged throughout the turn)
-        reformulated_question ← empty string; filled in by _reformulate_node
-        messages              ← empty list; filled in by _agent_node / ToolNode
-        session_history       ← a copy of the caller's history list so that
-                                mutations inside the graph do not affect the
-                                source list stored in self._histories
-        """
         return {
             "user_prompt": user_query,
             "reformulated_question": "",
-            "messages": [],
+            "needs_search": False,
+            "context": "",
+            "answer": "",
             "session_history": list(history) if history else [],
         }
 
     @staticmethod
     def _load_file(path: str) -> str:
-        """Read a text file from disk and return its contents as a string."""
         with open(path, "r") as f:
             return f.read()
