@@ -1,0 +1,5 @@
+{
+  "servers": [
+    {"name": "finance", "command": ["npx", "--yes", "@easysolutions906/mcp-finance"]}
+  ]
+}

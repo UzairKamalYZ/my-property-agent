@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -7,16 +8,14 @@ from typing import List, TypedDict
 logger = logging.getLogger(__name__)
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, AIMessage, AnyMessage
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage, AnyMessage, SystemMessage, ToolMessage
 from langsmith import traceable
 
 from langgraph.graph import StateGraph, START, END
 
 from ..config.config import Config
 from .embedder import Embedder
-from .finance_tools import close_finance_mcp, _mcp
+from .mcp_tools import close_mcp, _mcp
 from .rag_context_manager import RagContextManager
 
 os.environ.setdefault("LANGCHAIN_TRACING_V2", Config.LANGCHAIN_TRACING_V2)
@@ -24,16 +23,11 @@ os.environ.setdefault("LANGCHAIN_PROJECT", Config.LANGCHAIN_PROJECT)
 if Config.LANGCHAIN_API_KEY:
     os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
 
-_NON_USD_CURRENCY_RE = re.compile(r'\b(PLN|EUR|GBP|CHF|NOK|SEK|DKK|CZK|HUF|RON)\b')
-
 
 # ------------------- STATE -------------------
 
 class State(TypedDict):
     user_prompt: str
-    reformulated_question: str
-    needs_search: bool
-    needs_currency_conversion: bool
     context: str
     answer: str
     session_history: List[AnyMessage]
@@ -44,15 +38,14 @@ class State(TypedDict):
 class LlmModelGraph:
 
     def __init__(self, llm: BaseChatModel):
-        self.llm = llm
-
         self.system_prompt = self._load_file(Config.PROMPT_FILE)
-        self.reformulation_template = self._load_file(Config.REFORMULATION_PROMPT)
 
         self.rag_context_manager = RagContextManager(Embedder())
-
         self._histories: dict[str, list] = {}
-        self._currency_cache: dict[str, str] = {}  # 🔥 caching
+
+        # Bind all registered MCP tools so the LLM can call them natively.
+        self._tools = _mcp.langchain_tools()
+        self.llm = llm.bind_tools(self._tools) if self._tools else llm
 
         self.graph = self._build_graph()
 
@@ -100,7 +93,7 @@ class LlmModelGraph:
         ]
 
     def close(self):
-        close_finance_mcp()
+        close_mcp()
         logger.debug("LlmModelGraph closed")
 
     # ------------------- GRAPH -------------------
@@ -108,121 +101,84 @@ class LlmModelGraph:
     def _build_graph(self):
         graph = StateGraph(State)
 
-        graph.add_node("reformulate", self._reformulate_node)
-        graph.add_node("classify", self._classify_node)
         graph.add_node("retrieve", self._retrieve_node)
-        graph.add_node("currency_check", self._currency_check_node)
-        graph.add_node("currency_convert", self._currency_convert_node)
         graph.add_node("generate", self._generate_node)
 
-        graph.add_edge(START, "reformulate")
-        graph.add_edge("reformulate", "classify")
-
-        graph.add_conditional_edges(
-            "classify",
-            lambda state: "retrieve" if state["needs_search"] else "generate",
-        )
-
-        graph.add_edge("retrieve", "currency_check")
-
-        graph.add_conditional_edges(
-            "currency_check",
-            lambda state: "currency_convert" if state["needs_currency_conversion"] else "generate",
-        )
-
-        graph.add_edge("currency_convert", "generate")
+        graph.add_edge(START, "retrieve")
+        graph.add_edge("retrieve", "generate")
         graph.add_edge("generate", END)
 
         return graph.compile()
 
     # ------------------- NODES -------------------
 
-    def _reformulate_node(self, state: State) -> dict:
-        prompt = ChatPromptTemplate.from_template(self.reformulation_template)
-        chain = prompt | self.llm | StrOutputParser()
-        reformulated = chain.invoke({"user_prompt": state["user_prompt"]})
-        return {"reformulated_question": reformulated}
-
-    def _classify_node(self, state: State) -> dict:
-        prompt = ChatPromptTemplate.from_template(
-            "You are a query router. Decide whether this query needs property search.\n"
-            "Answer YES or NO.\n\nQuery: {query}"
-        )
-        chain = prompt | self.llm | StrOutputParser()
-        result = chain.invoke({"query": state["reformulated_question"]})
-        return {"needs_search": result.strip().upper().startswith("YES")}
-
     def _retrieve_node(self, state: State) -> dict:
-        context = self.rag_context_manager.get_context(state["reformulated_question"])
-        return {"context": context}
-
-    def _currency_check_node(self, state: State) -> dict:
-        prompt = ChatPromptTemplate.from_template(
-            """
-            Does the user need currency conversion to USD?
-
-            Answer YES if:
-            - USD mentioned
-            - conversion implied
-            - comparison needed
-
-            Otherwise NO.
-
-            Query: {query}
-            """
-        )
-        chain = prompt | self.llm | StrOutputParser()
-        result = chain.invoke({"query": state["reformulated_question"]})
-        return {"needs_currency_conversion": result.strip().upper().startswith("YES")}
-
-    def _currency_convert_node(self, state: State) -> dict:
-        context = state["context"]
-        currencies = sorted(set(_NON_USD_CURRENCY_RE.findall(context)))
-
-        if not currencies:
-            return {}
-
-        rates = []
-        for currency in currencies:
-            if currency not in self._currency_cache:
-                rate = _mcp.call_tool(
-                    "currency_convert",
-                    {"from": currency, "to": "USD", "amount": 1}
-                )
-                self._currency_cache[currency] = rate
-            else:
-                rate = self._currency_cache[currency]
-
-            if rate:
-                rates.append(f"1 {currency} = {rate}")
-
-        if rates:
-            context += "\n\nCurrency conversion rates:\n" + "\n".join(rates)
-
+        context = self.rag_context_manager.get_context(state["user_prompt"])
         return {"context": context}
 
     def _generate_node(self, state: State) -> dict:
-        messages = [("system", self.system_prompt)]
+        messages: list = [SystemMessage(content=self.system_prompt)]
 
         if state["context"]:
-            messages.append(("system", f"Relevant property listings:\n{state['context']}"))
+            messages.append(SystemMessage(content=f"Relevant property listings:\n{state['context']}"))
 
-        messages.append(MessagesPlaceholder(variable_name="history"))
-        messages.append(("human", "{question}"))
+        messages.extend(state["session_history"])
+        messages.append(HumanMessage(content=state["user_prompt"]))
 
-        prompt = ChatPromptTemplate.from_messages(messages)
+        # Tool call loop — the LLM may invoke MCP tools (e.g. currency_convert)
+        # before producing a final answer.
+        # Ollama models that lack native function-calling output tool calls as
+        # JSON text in response.content instead of populating response.tool_calls.
+        # _parse_json_tool_call() handles that fallback transparently.
+        response = self.llm.invoke(messages)
 
-        formatted = prompt.invoke({
-            "question": state["reformulated_question"],
-            "history": state["session_history"],
-        })
+        while True:
+            tool_calls = response.tool_calls or []
 
-        response = self.llm.invoke(formatted)
-        answer = response.content if hasattr(response, "content") else str(response)
+            if not tool_calls:
+                json_call = self._parse_json_tool_call(response.content)
+                if json_call:
+                    tool_calls = [json_call]
 
-        return {"answer": answer}
+            if not tool_calls:
+                break
+
+            messages.append(response)
+            for tool_call in tool_calls:
+                result = self._invoke_tool(tool_call["name"], tool_call.get("args", tool_call.get("parameters", {})))
+                messages.append(ToolMessage(content=result, tool_call_id=tool_call.get("id", "0")))
+                logger.info("tool '%s' executed, result_len=%d", tool_call["name"], len(result))
+            response = self.llm.invoke(messages)
+
+        return {"answer": response.content if hasattr(response, "content") else str(response)}
 
     # ------------------- HELPERS -------------------
+
+    @staticmethod
+    def _parse_json_tool_call(text: str) -> dict | None:
+        """
+        Detect and parse a tool call that Ollama emitted as JSON text rather than
+        as a native function call.  Returns a normalised dict with 'name', 'args',
+        and 'id' keys, or None if the content is not a tool call.
+        """
+        if not text:
+            return None
+        try:
+            # Strip optional markdown code fences.
+            cleaned = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", text, flags=re.DOTALL).strip()
+            data = json.loads(cleaned)
+            if isinstance(data, dict) and "name" in data:
+                args = data.get("parameters") or data.get("arguments") or data.get("args") or {}
+                return {"id": "0", "name": data["name"], "args": args}
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return None
+
+    def _invoke_tool(self, name: str, args: dict) -> str:
+        for tool in self._tools:
+            if tool.name == name:
+                return tool.invoke(args)
+        return f"Tool '{name}' not found."
 
     def _get_history(self, session_id: str) -> list:
         return self._histories.setdefault(session_id, [])
@@ -230,9 +186,6 @@ class LlmModelGraph:
     def _initial_state(self, user_query: str, history: list = None) -> State:
         return {
             "user_prompt": user_query,
-            "reformulated_question": "",
-            "needs_search": False,
-            "needs_currency_conversion": False,
             "context": "",
             "answer": "",
             "session_history": list(history) if history else [],

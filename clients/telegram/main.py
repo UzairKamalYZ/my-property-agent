@@ -1,3 +1,6 @@
+from logging_config import setup_logging
+setup_logging()
+
 import logging
 import random
 
@@ -7,9 +10,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 from agentP.src.agent import LocalAgent
 from agentP.src.config.config import Config
 from clients.base import BaseClient
-from logging_config import setup_logging
-
-setup_logging()
 
 WAITING_JOKES = [
     "Why did the scarecrow win an award? Because he was outstanding in his field — much like your future home!",
