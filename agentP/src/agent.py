@@ -1,4 +1,5 @@
 import json
+import uuid
 from rich.console import Console
 
 from .config.config import Config
@@ -10,7 +11,7 @@ from .scraping.web_scraper import WebScraper
 class LocalAgent:
     """Agent that uses a LangGraph-based local language model with memory."""
 
-    def __init__(self):
+    def __init__(self, session_id: str = None):
         print(">>>>>> LocalAgent.__init__ called <<<<<<")
         llm = create_llm(
             provider=Config.LLM_PROVIDER,
@@ -18,16 +19,24 @@ class LocalAgent:
         )
         self.model = LlmModelGraph(llm)
         self.web_scraper = WebScraper()
+        self.session_id = session_id or str(uuid.uuid4())
         with open(Config.INTERACTION_FILE, "r") as f:
             self.interaction_texts = json.load(f)
 
-    def ask(self, prompt: str, stream=False):
+    def ask(self, prompt: str, stream=False, session_id: str = None):
         """
         Asks the model a question using the full RAG and reformulation pipeline.
+
+        session_id controls which conversation history is used:
+          - Pass an explicit session_id (e.g. a Telegram chat ID) to maintain
+            separate histories per user when a single LocalAgent serves many callers.
+          - Omit it to use self.session_id, which keeps one continuous history
+            for the lifetime of this LocalAgent instance (CLI, cron, etc.).
         """
+        sid = session_id or self.session_id
         if stream:
-            return self.model.ask_stream(prompt)
-        return self.model.ask(prompt)
+            return self.model.ask_stream(prompt, session_id=sid)
+        return self.model.ask(prompt, session_id=sid)
 
     def __enter__(self):
         return self

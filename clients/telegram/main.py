@@ -46,12 +46,14 @@ class _Bot:
             f"Your personal property agent is thinking...\n\n💡 While you wait: {joke}"
         )
 
+        session_id = str(update.effective_chat.id)
+
         try:
             accumulated = ""
             last_sent = ""
             chunk_count = 0
 
-            for token in self.local_agent.ask(user_text, stream=True):
+            for token in self.local_agent.ask(user_text, stream=True, session_id=session_id):
                 accumulated += token
                 chunk_count += 1
                 if chunk_count % 20 == 0 and accumulated != last_sent:
