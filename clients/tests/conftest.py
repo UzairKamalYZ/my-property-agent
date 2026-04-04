@@ -66,6 +66,9 @@ _fastapi.Security      = MagicMock()
 _stub("fastapi.responses").StreamingResponse = MagicMock
 _stub("fastapi.security").APIKeyHeader       = MagicMock
 
+# streamlit — not installed in the minimal test environment
+_stub("streamlit")
+
 # telegram (python-telegram-bot)
 _tg            = _stub("telegram")
 _tg.Update     = MagicMock()

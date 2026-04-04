@@ -1,6 +1,14 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+# Ensure the project root is importable regardless of how this file is launched:
+# `python -m clients.streamlit.main`, `streamlit run`, or via subprocess.
+# Must happen before any local package import.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import streamlit as st
 import requests
@@ -72,13 +80,29 @@ class StreamlitClient(BaseClient):
     """Launches the Streamlit UI server as a subprocess."""
 
     def start(self) -> None:
+        env = os.environ.copy()
+        # Make the project root importable inside the subprocess so that
+        # `from clients.base import BaseClient` resolves when Streamlit runs
+        # this script outside a `python -m` context.
+        root = str(_PROJECT_ROOT)
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{root}{os.pathsep}{existing}" if existing else root
+        # Signal the subprocess that it is the Streamlit worker, not the launcher,
+        # so the __main__ guard calls _run_ui() instead of starting again.
+        env["_STREAMLIT_APP"] = "1"
         subprocess.run(
             [sys.executable, "-m", "streamlit", "run", str(Path(__file__))],
+            env=env,
             check=True,
         )
 
 
-# Executed by `streamlit run clients/streamlit/main.py`
-# __name__ is "__main__" both when Streamlit runs the script and on every rerun.
+# When launched via `python -m clients.streamlit.main` (the launcher):
+#   _STREAMLIT_APP is not set → call start(), which spawns the subprocess.
+# When Streamlit re-executes this file inside the subprocess (the worker):
+#   _STREAMLIT_APP="1" → call _run_ui() to render the UI.
 if __name__ == "__main__":
-    _run_ui()
+    if os.environ.get("_STREAMLIT_APP"):
+        _run_ui()
+    else:
+        StreamlitClient().start()
