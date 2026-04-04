@@ -37,3 +37,4 @@ class Config:
     SBR_WEBDRIVER = os.getenv("SBR_WEBDRIVER", "")
     # Number of listings to retrieve per RAG search
     RAG_K = int(os.getenv("RAG_K", "5"))
+    MAX_HISTORY_TURNS= os.getenv("MAX_HISTORY_TURNS", 10)

@@ -125,40 +125,23 @@ class TestLlmModelGraph(unittest.TestCase):
     # ask_stream()
     # ------------------------------------------------------------------
 
-    def test_should_yield_tokens_from_generate_node_when_streaming(self):
-        self.model.graph.stream.return_value = [
-            self._stream_chunk("Hello ", "generate"),
-            self._stream_chunk("world", "generate"),
-        ]
+    def test_should_yield_full_answer_when_streaming(self):
+        """ask_stream() delegates to ask() and yields the complete answer as one token."""
+        self.model.graph.invoke.return_value = {"answer": "Here are 3 flats in Warsaw."}
         tokens = list(self.model.ask_stream("find a flat"))
-        self.assertEqual(tokens, ["Hello ", "world"])
+        self.assertEqual(tokens, ["Here are 3 flats in Warsaw."])
 
-    def test_should_ignore_non_generate_nodes_when_streaming(self):
-        self.model.graph.stream.return_value = [
-            self._stream_chunk("ignored", "retrieve"),
-            self._stream_chunk("kept", "generate"),
-        ]
-        tokens = list(self.model.ask_stream("q"))
-        self.assertEqual(tokens, ["kept"])
-
-    def test_should_skip_empty_tokens_when_streaming(self):
-        self.model.graph.stream.return_value = [
-            self._stream_chunk("", "generate"),
-            self._stream_chunk("real token", "generate"),
-        ]
-        tokens = list(self.model.ask_stream("q"))
-        self.assertEqual(tokens, ["real token"])
-
-    def test_should_append_human_and_ai_messages_to_history_when_streaming(self):
+    def test_should_store_ai_response_in_history_when_streaming(self):
+        """ask_stream() records both the user query and the full AI answer in history."""
         SESSION = "sess-stream-hist"
-        self.model.graph.stream.return_value = [
-            self._stream_chunk("part1 ", "generate"),
-            self._stream_chunk("part2", "generate"),
-        ]
+        self.model.graph.invoke.return_value = {"answer": "Found 2 listings."}
         list(self.model.ask_stream("my query", session_id=SESSION))
         hist = self.model._histories[SESSION]
+        self.assertEqual(len(hist), 2)
+        self.assertIsInstance(hist[0], HumanMessage)
+        self.assertIsInstance(hist[1], AIMessage)
         self.assertEqual(hist[0].content, "my query")
-        self.assertEqual(hist[1].content, "part1 part2")
+        self.assertEqual(hist[1].content, "Found 2 listings.")
 
     # ------------------------------------------------------------------
     # _retrieve_node()

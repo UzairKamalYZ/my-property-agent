@@ -37,13 +37,14 @@ class State(TypedDict):
 
 class LlmModelGraph:
 
+    MAX_TOOL_CALLS = 5  # 🔥 CRITICAL: prevents infinite loops
+
     def __init__(self, llm: BaseChatModel):
         self.system_prompt = self._load_file(Config.PROMPT_FILE)
 
         self.rag_context_manager = RagContextManager(Embedder())
         self._histories: dict[str, list] = {}
 
-        # Bind all registered MCP tools so the LLM can call them natively.
         self._tools = _mcp.langchain_tools()
         self.llm = llm.bind_tools(self._tools) if self._tools else llm
 
@@ -73,24 +74,8 @@ class LlmModelGraph:
         if session_id is None:
             session_id = str(uuid.uuid4())
 
-        history = self._get_history(session_id)
-        state = self._initial_state(user_query, history)
-        full_answer = ""
-
-        for chunk, metadata in self.graph.stream(
-            state,
-            stream_mode="messages",
-        ):
-            if metadata.get("langgraph_node") == "generate" and hasattr(chunk, "content"):
-                token = chunk.content
-                if token:
-                    full_answer += token
-                    yield token
-
-        self._histories[session_id] = history + [
-            HumanMessage(content=user_query),
-            AIMessage(content=full_answer),
-        ]
+        answer = self.ask(user_query, session_id=session_id)
+        yield answer
 
     def close(self):
         close_mcp()
@@ -125,14 +110,13 @@ class LlmModelGraph:
         messages.extend(state["session_history"])
         messages.append(HumanMessage(content=state["user_prompt"]))
 
-        # Tool call loop — the LLM may invoke MCP tools (e.g. currency_convert)
-        # before producing a final answer.
-        # Ollama models that lack native function-calling output tool calls as
-        # JSON text in response.content instead of populating response.tool_calls.
-        # _parse_json_tool_call() handles that fallback transparently.
         response = self.llm.invoke(messages)
 
-        while True:
+        iterations = 0  # 🔥 loop guard
+
+        while iterations < self.MAX_TOOL_CALLS:
+            iterations += 1
+
             tool_calls = response.tool_calls or []
 
             if not tool_calls:
@@ -143,32 +127,49 @@ class LlmModelGraph:
             if not tool_calls:
                 break
 
+            logger.info("Tool iteration %d: detected %d tool call(s)", iterations, len(tool_calls))
+
             messages.append(response)
+
             for tool_call in tool_calls:
-                result = self._invoke_tool(tool_call["name"], tool_call.get("args", tool_call.get("parameters", {})))
-                messages.append(ToolMessage(content=result, tool_call_id=tool_call.get("id", "0")))
-                logger.info("tool '%s' executed, result_len=%d", tool_call["name"], len(result))
+                name = tool_call["name"]
+                args = tool_call.get("args", tool_call.get("parameters", {})) or {}
+
+                logger.info("Calling tool '%s' with args=%s", name, args)
+
+                result = self._invoke_tool(name, args)
+
+                messages.append(
+                    ToolMessage(
+                        content=result,
+                        tool_call_id=tool_call.get("id", str(iterations))
+                    )
+                )
+
+                logger.info("Tool '%s' executed, result_len=%d", name, len(result))
+
             response = self.llm.invoke(messages)
 
-        return {"answer": response.content if hasattr(response, "content") else str(response)}
+        # 🔥 Safety fallback if loop exceeded
+        if iterations >= self.MAX_TOOL_CALLS:
+            logger.warning("Max tool iterations reached, forcing final answer")
+
+        return {
+            "answer": response.content if hasattr(response, "content") else str(response)
+        }
 
     # ------------------- HELPERS -------------------
 
     @staticmethod
     def _parse_json_tool_call(text: str) -> dict | None:
-        """
-        Detect and parse a tool call that Ollama emitted as JSON text rather than
-        as a native function call.  Returns a normalised dict with 'name', 'args',
-        and 'id' keys, or None if the content is not a tool call.
-        """
         if not text:
             return None
         try:
-            # Strip optional markdown code fences.
             cleaned = re.sub(r"```(?:json)?\s*(.*?)\s*```", r"\1", text, flags=re.DOTALL).strip()
             data = json.loads(cleaned)
             if isinstance(data, dict) and "name" in data:
                 args = data.get("parameters") or data.get("arguments") or data.get("args") or {}
+                args = args if isinstance(args, dict) else {}
                 return {"id": "0", "name": data["name"], "args": args}
         except (json.JSONDecodeError, ValueError):
             pass
@@ -177,11 +178,18 @@ class LlmModelGraph:
     def _invoke_tool(self, name: str, args: dict) -> str:
         for tool in self._tools:
             if tool.name == name:
-                return tool.invoke(args)
+                try:
+                    return tool.invoke(args)
+                except Exception as e:
+                    logger.error("Tool '%s' failed: %s", name, str(e))
+                    return f"Error executing tool {name}: {str(e)}"
+
         return f"Tool '{name}' not found."
 
     def _get_history(self, session_id: str) -> list:
-        return self._histories.setdefault(session_id, [])
+        history = self._histories.setdefault(session_id, [])
+        max_messages = int(Config.MAX_HISTORY_TURNS) * 2
+        return history[-max_messages:] if len(history) > max_messages else history
 
     def _initial_state(self, user_query: str, history: list = None) -> State:
         return {
