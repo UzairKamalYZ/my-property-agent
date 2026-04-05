@@ -6,19 +6,30 @@ A conversational AI system for property search. Users describe what they're look
 
 ## Features
 
-- **Minimal LangGraph pipeline** — two nodes, no conditional edges: retrieve → generate
+- **Shared agent core** — `BaseAgent` in `core/` owns LLM creation, the LangGraph pipeline, tool calling, and session history; domain agents extend it with one prompt override
+- **Minimal LangGraph pipeline** — two nodes, no conditional edges: `retrieve → generate`
 - **MCP tool integration** — add any MCP server by dropping a line in `mcp.json`; tools are auto-discovered and bound to the LLM at startup
 - **Streaming responses** — token-by-token output via SSE (REST) or live message edits (Telegram)
-- **Conversation memory** — per-session history threaded through every graph invocation
+- **Conversation memory** — per-session sliding-window history threaded through every graph invocation
 - **Multiple clients** — REST API, Streamlit UI, Telegram bot, scheduled cron job
 - **Pluggable vector store** — FAISS (local) or Pinecone (cloud), switched via config
 - **LangSmith observability** — every run traced with `@traceable`
 - **Web scraping** — ingest listings from URLs or CSV files
-- **110 tests** — TDD-style naming (`test_should_<result>_when_<condition>`) across all layers
+- **133 tests** — TDD-style naming (`test_should_<result>_when_<condition>`) across all layers
 
 ---
 
 ## Architecture
+
+### Package layout
+
+```
+my-property-agent/
+├── core/           ← shared AI infrastructure (all agents import from here)
+├── agentP/         ← property-search agent (property-specific code only)
+├── agentF/         ← finance Q&A agent
+└── clients/        ← REST, Streamlit, Telegram, Cron
+```
 
 ### Request flow
 
@@ -26,19 +37,44 @@ A conversational AI system for property search. Users describe what they're look
 User (any client)
   │
   ▼
-LocalAgent.ask(prompt)
+LocalAgent.ask(prompt)          ← agentP — property-search agent
+  │  (or FinanceAgent.ask())    ← agentF — finance Q&A agent
+  ▼
+BaseAgent                       ← core — owns the pipeline
   │
   ▼
 LlmModelGraph
   ├── [retrieve]  user_prompt → vector search → context (formatted listings)
   └── [generate]  system prompt + context + history + user_prompt → answer
-                   └── tool call loop (MCP tools, e.g. currency_convert)
+                   └── tool call loop (MCP tools bound at startup)
   │
   ▼
 Response (blocking string or token stream)
 ```
 
-### LangGraph pipeline (`agentP/src/model/llm_model_graph.py`)
+### BaseAgent (`core/src/base_agent.py`)
+
+All domain agents extend `BaseAgent`, which owns every shared capability:
+
+```python
+class BaseAgent:
+    def get_system_prompt(self) -> str: ...      # override with your prompt
+    def get_rag_context_manager(self) -> ...: ... # override for custom RAG
+    def ask(prompt, stream, session_id): ...
+    def close(): ...
+```
+
+Adding a new agent:
+
+```python
+class MyAgent(BaseAgent):
+    def get_system_prompt(self) -> str:
+        return LlmModelGraph._load_file("path/to/my_prompt.txt")
+```
+
+That's all. `ask`, `stream`, `close`, context manager, session history, MCP tools — all inherited.
+
+### LangGraph pipeline (`core/src/model/llm_model_graph.py`)
 
 ```
 START → retrieve → generate → END
@@ -59,8 +95,7 @@ class State(TypedDict):
     session_history: List[AnyMessage]
 ```
 
-**Why two nodes?**
-Vector search costs ~1 ms. A dedicated LLM node to decide whether to search (classify) or rewrite the query (reformulate) costs ~1 s each with no meaningful quality gain — `all-MiniLM-L6-v2` handles natural-language queries directly. The LLM in `generate` handles conversational messages gracefully when context is empty.
+**Why two nodes?** Vector search costs ~1 ms. A dedicated LLM classify or reformulate node costs ~1 s each with no meaningful quality gain — `all-MiniLM-L6-v2` handles natural-language queries directly.
 
 ### MCP tool integration
 
@@ -74,9 +109,7 @@ Tools are declared in **`mcp.json`** at the project root — no code changes nee
 }
 ```
 
-At startup, `mcp_tools.py` reads this file and registers each server. Subprocesses start lazily on first use. All discovered tools are bound to the LLM via `llm.bind_tools()`.
-
-The `generate` node runs a tool-call loop that handles both native function-calling responses and Ollama's JSON-text fallback transparently.
+At startup, `mcp_tools.py` reads this file and registers each server. Subprocesses start lazily on first use. All discovered tools are bound to the LLM via `llm.bind_tools()`. System prompts never name specific tool names — the LLM learns them from the bound schema.
 
 ### Client layer (`clients/`)
 
@@ -85,9 +118,8 @@ All clients implement `BaseClient`:
 ```python
 class BaseClient(ABC):
     @abstractmethod
-    def start(self) -> None: ...  # blocks until stopped
-    def stop(self) -> None: ...   # graceful shutdown (override if needed)
-    # + context manager (__enter__ / __exit__)
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
 ```
 
 | Client | Entry point | Transport |
@@ -103,75 +135,75 @@ class BaseClient(ABC):
 
 ```
 my-property-agent/
-├── .env                             # Runtime config (see Configuration)
-├── mcp.json                         # MCP server registry
-├── pyproject.toml                   # Project metadata and dependencies
-├── logging_config.py                # Central logging setup (logs/agent.log)
-├── agentP/
-│   ├── requirements.txt             # Pinned dependency lockfile
-│   ├── urls.txt                     # URLs for web scraping
+├── .env                              # Runtime config (see Configuration)
+├── mcp.json                          # MCP server registry
+├── pyproject.toml                    # Project metadata and dependencies
+├── logging_config.py                 # Central logging setup (logs/agent.log)
+│
+├── core/                             # Shared AI agent infrastructure
 │   ├── src/
-│   │   ├── agent.py                 # LocalAgent — thin facade over LlmModelGraph
-│   │   ├── config/
-│   │   │   └── config.py            # Centralised settings loaded from .env
+│   │   ├── base_agent.py             # BaseAgent — extended by all domain agents
+│   │   ├── config/config.py          # Centralised settings loaded from .env
 │   │   ├── model/
-│   │   │   ├── llm_factory.py       # Creates the LLM (Ollama via OpenAI-compatible API)
-│   │   │   ├── llm_model_graph.py   # LangGraph pipeline (retrieve → generate)
-│   │   │   ├── mcp_registry.py      # Generic MCPProcess + MCPRegistry
-│   │   │   ├── mcp_tools.py         # Loads mcp.json, exposes shared _mcp registry
-│   │   │   ├── embedder.py          # SentenceTransformer embeddings
-│   │   │   ├── rag_context_manager.py  # Vector search → formatted context
-│   │   │   ├── context_builder.py   # Formats listing dicts as readable text
-│   │   │   └── session_manager.py   # SQLite-backed session history
-│   │   ├── persistence/
-│   │   │   ├── vector_store.py      # Abstract base (add / search)
-│   │   │   ├── factory.py           # Selects FAISS or Pinecone at runtime
-│   │   │   ├── faiss_store.py       # Local FAISS implementation
-│   │   │   └── pinecone_store.py    # Cloud Pinecone implementation
-│   │   ├── housing/
-│   │   │   ├── housing_data_collector.py   # Streams CSV → embeddings
-│   │   │   └── housing_csv_reader.py       # CSV parsing utility
-│   │   ├── gatherers/
-│   │   │   ├── data_collector.py           # Scrapes listing URLs
-│   │   │   └── pl_housing_data_collector.py # Polish housing ingestion
-│   │   ├── scraping/
-│   │   │   ├── web_scraper.py       # HTTP fetch + HTML cleanup
-│   │   │   ├── url_processor.py     # Regex-based listing extraction
-│   │   │   ├── scrape_se.py         # Selenium-based scraper
-│   │   │   └── utils.py             # Converts listings to LangChain Documents
-│   │   └── prompts/
-│   │       ├── System_Prompt.txt    # Agent persona and tool instructions
-│   │       └── interaction.json     # CLI interaction strings
+│   │   │   ├── llm_model_graph.py    # LangGraph pipeline (retrieve → generate)
+│   │   │   ├── llm_factory.py        # Creates the LLM (Ollama via OpenAI-compat API)
+│   │   │   ├── embedder.py           # SentenceTransformer embeddings
+│   │   │   ├── rag_context_manager.py# Vector search → formatted context
+│   │   │   ├── context_builder.py    # Formats listing dicts as readable text
+│   │   │   ├── session_manager.py    # SQLite-backed session history
+│   │   │   ├── mcp_registry.py       # Generic MCPProcess + MCPRegistry
+│   │   │   └── mcp_tools.py          # Loads mcp.json, exposes shared _mcp registry
+│   │   └── persistence/
+│   │       ├── vector_store.py       # Abstract base (add / search)
+│   │       ├── factory.py            # Selects FAISS or Pinecone at runtime
+│   │       ├── faiss_store.py        # Local FAISS implementation
+│   │       └── pinecone_store.py     # Cloud Pinecone implementation
 │   └── tests/
 │       ├── conftest.py
+│       ├── test_base_agent.py
 │       └── model/
 │           ├── test_embedder.py
 │           ├── test_llm_model_graph.py
-│           ├── test_mcp_tools.py
-│           └── test_rag_context_manager.py
+│           └── test_mcp_tools.py
+│
+├── agentP/                           # Property-search agent
+│   ├── src/
+│   │   ├── agent.py                  # LocalAgent(BaseAgent) — adds WebScraper + CLI
+│   │   ├── housing/                  # CSV → embedding-ready text
+│   │   ├── gatherers/                # Data ingestion (web + Polish housing)
+│   │   ├── scraping/                 # HTTP + Selenium scrapers
+│   │   └── prompts/
+│   │       ├── System_Prompt.txt     # Property agent persona
+│   │       └── interaction.json      # CLI strings
+│   ├── tests/
+│   └── urls.txt
+│
+├── agentF/                           # Finance Q&A agent
+│   ├── src/
+│   │   ├── agent.py                  # FinanceAgent(BaseAgent) — overrides get_system_prompt()
+│   │   ├── config/config.py          # FinanceConfig (FINANCE_PROMPT_FILE, FINANCE_PINECONE_INDEX_NAME)
+│   │   └── prompts/
+│   │       └── System_Prompt.txt     # Finance agent persona
+│   └── tests/
+│       └── model/test_finance_agent.py
 │
 ├── clients/
-│   ├── base.py                      # BaseClient ABC
-│   ├── rest/main.py                 # FastAPI app + RestClient
-│   ├── streamlit/main.py            # Streamlit UI + StreamlitClient
-│   ├── telegram/main.py             # Telegram bot + TelegramClient
-│   ├── cron/main.py                 # Scheduled search + CronClient
+│   ├── base.py                       # BaseClient ABC
+│   ├── rest/main.py                  # FastAPI app + RestClient
+│   ├── streamlit/main.py             # Streamlit UI + StreamlitClient
+│   ├── telegram/main.py              # Telegram bot + TelegramClient
+│   ├── cron/main.py                  # Scheduled search + CronClient
 │   └── tests/
-│       ├── test_base_client.py
-│       ├── test_rest_client.py
-│       ├── test_cron_client.py
-│       ├── test_telegram_client.py
-│       └── test_streamlit_client.py
 │
 └── logs/
-    └── agent.log                    # Unified runtime log (all clients)
+    └── agent.log                     # Unified runtime log (all clients)
 ```
 
 ---
 
 ## Configuration
 
-All settings live in `.env` at the project root. Loaded automatically by `agentP/src/config/config.py` via an absolute path — works regardless of where the process is launched from.
+All settings live in `.env` at the project root. Loaded automatically by `core/src/config/config.py` via an absolute path — works regardless of where the process is launched from.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -186,13 +218,16 @@ All settings live in `.env` at the project root. Loaded automatically by `agentP
 | `RAG_K` | `5` | Listings returned per vector search |
 | `PINECONE_API_KEY` | _(required for cloud)_ | Pinecone API key |
 | `PINECONE_INDEX_NAME` | `property-agent` | Pinecone index name |
-| `PROMPT_FILE` | `agentP/src/prompts/System_Prompt.txt` | Agent system prompt path |
+| `PROMPT_FILE` | `agentP/src/prompts/System_Prompt.txt` | Property agent system prompt path |
 | `INTERACTION_FILE` | `agentP/src/prompts/interaction.json` | CLI interaction strings path |
 | `SESSION_DB_FILE` | `sessions.db` | SQLite file for chat session history |
+| `MAX_HISTORY_TURNS` | `10` | Sliding window depth for session history |
 | `TELEGRAM_BOT_TOKEN` | _(required for Telegram)_ | Token from [@BotFather](https://t.me/BotFather) |
 | `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header |
 | `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000)_ | Prompt used by the scheduled job |
 | `SBR_WEBDRIVER` | _(empty)_ | Selenium WebDriver URL for `scrape_se.py` |
+| `FINANCE_PROMPT_FILE` | `agentF/src/prompts/System_Prompt.txt` | Finance agent system prompt path |
+| `FINANCE_PINECONE_INDEX_NAME` | _(falls back to PINECONE_INDEX_NAME)_ | Separate Pinecone index for finance agent |
 | `LANGCHAIN_TRACING_V2` | `false` | Set `true` to enable LangSmith tracing |
 | `LANGCHAIN_API_KEY` | _(empty)_ | LangSmith API key |
 | `LANGCHAIN_PROJECT` | `my-property-agent` | LangSmith project name |
@@ -203,7 +238,7 @@ All settings live in `.env` at the project root. Loaded automatically by `agentP
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.13+
 - [Ollama](https://ollama.ai/) installed and running
 - Node.js (for MCP servers via `npx`)
 - Pinecone account (or set `STORE_TYPE=local` for offline FAISS)
@@ -214,12 +249,6 @@ All settings live in `.env` at the project root. Loaded automatically by `agentP
 git clone https://github.com/your-username/my-property-agent.git
 cd my-property-agent
 uv venv && uv sync
-```
-
-Or with pip:
-
-```bash
-pip install -r agentP/requirements.txt
 ```
 
 Pull the LLM model:
@@ -283,6 +312,12 @@ python -m clients.cron.main
 # Fires CRON_SEARCH_PROMPT every 30 minutes
 ```
 
+### Finance agent (CLI)
+
+```bash
+python -m agentF.src.agent
+```
+
 ---
 
 ## Adding an MCP server
@@ -299,6 +334,26 @@ Edit `mcp.json` at the project root and restart:
 ```
 
 No Python changes required. Tools are auto-discovered via `tools/list` and bound to the LLM at startup.
+
+---
+
+## Adding a new domain agent
+
+1. Create `agentX/src/agent.py`:
+
+```python
+from core.src.base_agent import BaseAgent
+from core.src.model.llm_model_graph import LlmModelGraph
+
+class MyAgent(BaseAgent):
+    def get_system_prompt(self) -> str:
+        return LlmModelGraph._load_file("agentX/src/prompts/System_Prompt.txt")
+```
+
+2. Add a system prompt at `agentX/src/prompts/System_Prompt.txt`.
+3. Run with `python -m agentX.src.agent`.
+
+No changes to `core/`, `agentP/`, or any client required.
 
 ---
 
@@ -325,11 +380,14 @@ python -m agentP.src.gatherers.data_collector
 ## Testing
 
 ```bash
-# All tests (110 total)
-python -m pytest agentP/tests/ clients/tests/ -v
+# All tests (133 total)
+python -m pytest
+
+# Explicit paths
+python -m pytest core/tests/ agentP/tests/ agentF/tests/ clients/tests/ -v
 
 # With coverage
-python -m pytest agentP/tests/ clients/tests/ --cov=agentP/src --cov=clients --cov-report=term-missing
+python -m pytest --cov=core/src --cov=agentP/src --cov=agentF/src --cov=clients --cov-report=term-missing
 ```
 
 All external dependencies (LLM, vector store, network, Telegram, MCP subprocesses) are mocked. No real services are required to run the test suite.
