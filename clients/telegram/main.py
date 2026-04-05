@@ -8,7 +8,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
 from agentP.src.agent import LocalAgent
-from agentP.src.config.config import Config
+from core.src.config.config import Config
 from clients.base import BaseClient
 
 WAITING_JOKES = [

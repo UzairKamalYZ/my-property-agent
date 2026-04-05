@@ -4,7 +4,7 @@ setup_logging()
 import time
 
 from agentP.src.agent import LocalAgent
-from agentP.src.config.config import Config
+from core.src.config.config import Config
 from clients.base import BaseClient
 
 

@@ -13,7 +13,7 @@ if "faiss" in sys.modules and getattr(sys.modules["faiss"], "__spec__", None) is
 
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk
 
-from agentP.src.model.llm_model_graph import LlmModelGraph, State
+from core.src.model.llm_model_graph import LlmModelGraph, State
 
 _FAKE_SYSTEM_PROMPT = "You are a helpful property agent."
 
@@ -22,9 +22,9 @@ class TestLlmModelGraph(unittest.TestCase):
 
     def setUp(self):
         self._load_file_patcher = patch.object(LlmModelGraph, "_load_file")
-        self._embedder_patcher = patch("agentP.src.model.llm_model_graph.Embedder")
-        self._rag_patcher = patch("agentP.src.model.llm_model_graph.RagContextManager")
-        self._mcp_patcher = patch("agentP.src.model.llm_model_graph._mcp")
+        self._embedder_patcher = patch("core.src.model.llm_model_graph.Embedder")
+        self._rag_patcher = patch("core.src.model.llm_model_graph.RagContextManager")
+        self._mcp_patcher = patch("core.src.model.llm_model_graph._mcp")
 
         mock_load_file = self._load_file_patcher.start()
         self._embedder_patcher.start()
@@ -236,7 +236,7 @@ class TestLlmModelGraph(unittest.TestCase):
     # close()
     # ------------------------------------------------------------------
 
-    @patch("agentP.src.model.llm_model_graph.close_mcp")
+    @patch("core.src.model.llm_model_graph.close_mcp")
     def test_should_delegate_to_close_mcp_when_close_is_called(self, mock_close_mcp):
         self.model.close()
         mock_close_mcp.assert_called_once()

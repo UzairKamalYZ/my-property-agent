@@ -39,10 +39,15 @@ class LlmModelGraph:
 
     MAX_TOOL_CALLS = 5  # 🔥 CRITICAL: prevents infinite loops
 
-    def __init__(self, llm: BaseChatModel):
-        self.system_prompt = self._load_file(Config.PROMPT_FILE)
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        system_prompt: str = None,
+        rag_context_manager: RagContextManager = None,
+    ):
+        self.system_prompt = system_prompt or self._load_file(Config.PROMPT_FILE)
 
-        self.rag_context_manager = RagContextManager(Embedder())
+        self.rag_context_manager = rag_context_manager or RagContextManager(Embedder())
         self._histories: dict[str, list] = {}
 
         self._tools = _mcp.langchain_tools()

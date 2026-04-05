@@ -3,8 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from agentP.src.model.mcp_tools import _mcp, close_mcp, _load_registry
-from agentP.src.model.mcp_registry import MCPProcess, MCPRegistry
+from core.src.model.mcp_tools import _mcp, close_mcp, _load_registry
+from core.src.model.mcp_registry import MCPProcess, MCPRegistry
 
 
 class TestLoadRegistry(unittest.TestCase):
@@ -76,7 +76,7 @@ class TestModuleSingleton(unittest.TestCase):
         server = _mcp._servers["finance"]
         self.assertIn("@easysolutions906/mcp-finance", server._command)
 
-    @patch("agentP.src.model.mcp_tools._mcp")
+    @patch("core.src.model.mcp_tools._mcp")
     def test_close_mcp_delegates_to_registry(self, mock_registry):
         """close_mcp() calls close() on the shared registry."""
         close_mcp()
@@ -97,7 +97,7 @@ class TestMCPProcess(unittest.TestCase):
         mock_proc.stdin.flush = MagicMock()
         return mock_proc
 
-    @patch("agentP.src.model.mcp_registry.subprocess.Popen")
+    @patch("core.src.model.mcp_registry.subprocess.Popen")
     def test_should_start_subprocess_on_first_call(self, mock_popen):
         init_resp = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
         tool_resp = json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": "200 USD"}]}})
@@ -108,7 +108,7 @@ class TestMCPProcess(unittest.TestCase):
         mock_popen.assert_called_once()
         self.assertEqual(result, "200 USD")
 
-    @patch("agentP.src.model.mcp_registry.subprocess.Popen")
+    @patch("core.src.model.mcp_registry.subprocess.Popen")
     def test_should_reuse_process_on_second_call(self, mock_popen):
         init_resp = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
         resp1 = json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": "ok"}]}})
@@ -120,7 +120,7 @@ class TestMCPProcess(unittest.TestCase):
 
         self.assertEqual(mock_popen.call_count, 1)
 
-    @patch("agentP.src.model.mcp_registry.subprocess.Popen")
+    @patch("core.src.model.mcp_registry.subprocess.Popen")
     def test_should_join_multiple_text_content_items(self, mock_popen):
         init_resp = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}})
         tool_resp = json.dumps({
@@ -137,7 +137,7 @@ class TestMCPProcess(unittest.TestCase):
         self.assertIn("Line one", result)
         self.assertIn("Line two", result)
 
-    @patch("agentP.src.model.mcp_registry.subprocess.Popen")
+    @patch("core.src.model.mcp_registry.subprocess.Popen")
     def test_should_return_error_string_when_subprocess_raises(self, mock_popen):
         mock_popen.side_effect = FileNotFoundError("npx not found")
 

@@ -37,8 +37,8 @@ def _stub(name: str) -> MagicMock:
 _agent_mod = _stub("agentP.src.agent")
 _agent_mod.LocalAgent = MagicMock
 
-# agentP.src.config.config — clients read Config attributes (API_KEY, tokens…)
-_config_mod = _stub("agentP.src.config.config")
+# core.src.config.config — clients now import Config from here
+_core_config_mod = _stub("core.src.config.config")
 _Config = MagicMock()
 _Config.API_KEY = ""
 _Config.TELEGRAM_BOT_TOKEN = "test-token"
@@ -50,6 +50,10 @@ _Config.LANGCHAIN_PROJECT = "my-property-agent"
 _Config.LANGCHAIN_API_KEY = ""
 _Config.AI_PROVIDER_API_KEY = "ollama"
 _Config.AI_PROVIDER_BASE_URL = "http://localhost:11434/v1"
+_core_config_mod.Config = _Config
+
+# agentP.src.config.config — kept as alias so any remaining references still resolve
+_config_mod = _stub("agentP.src.config.config")
 _config_mod.Config = _Config
 
 # ---------------------------------------------------------------------------

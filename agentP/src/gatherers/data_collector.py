@@ -1,9 +1,9 @@
 import uuid
 
-from agentP.src.model.embedder import Embedder
-from agentP.src.scraping.url_processor import UrlProcessor
-from agentP.src.scraping.web_scraper import WebScraper
-from agentP.src.config.config import Config
+from core.src.model.embedder import Embedder
+from core.src.config.config import Config
+from ..scraping.url_processor import UrlProcessor
+from ..scraping.web_scraper import WebScraper
 
 
 class DataCollector:

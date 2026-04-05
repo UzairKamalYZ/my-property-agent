@@ -1,6 +1,6 @@
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 
-from agentP.src.config.config import Config
+from ..config.config import Config
 
 
 class SessionManager:

@@ -2,8 +2,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
 
-from agentP.src.model.embedder import Embedder
-from agentP.src.persistence.vector_store import VectorStore
+from core.src.model.embedder import Embedder
+from core.src.persistence.vector_store import VectorStore
 
 
 class TestEmbedder(unittest.TestCase):
@@ -12,13 +12,13 @@ class TestEmbedder(unittest.TestCase):
     # __init__
     # ------------------------------------------------------------------
 
-    @patch('agentP.src.model.embedder.SentenceTransformer')
+    @patch('core.src.model.embedder.SentenceTransformer')
     def test_should_initialise_sentence_transformer_when_created(self, mock_sentence_transformer):
         """Embedder.__init__ loads the SentenceTransformer model exactly once."""
         Embedder()
         mock_sentence_transformer.assert_called_once()
 
-    @patch('agentP.src.model.embedder.SentenceTransformer')
+    @patch('core.src.model.embedder.SentenceTransformer')
     def test_should_have_no_store_when_first_created(self, _mock_st):
         """store is None until get_store() is called for the first time."""
         embedder = Embedder()
@@ -81,7 +81,7 @@ class TestEmbedder(unittest.TestCase):
     # embed_documents_to_vectors()
     # ------------------------------------------------------------------
 
-    @patch('agentP.src.model.embedder.SentenceTransformer')
+    @patch('core.src.model.embedder.SentenceTransformer')
     def test_should_return_one_vector_per_document_when_embedding_documents(self, mock_sentence_transformer):
         """embed_documents_to_vectors returns a list with the same length as the input dict."""
         mock_model = MagicMock()
@@ -98,7 +98,7 @@ class TestEmbedder(unittest.TestCase):
 
         self.assertEqual(len(vectors), 2)
 
-    @patch('agentP.src.model.embedder.SentenceTransformer')
+    @patch('core.src.model.embedder.SentenceTransformer')
     def test_should_use_document_key_as_id_when_embedding_documents(self, mock_sentence_transformer):
         """embed_documents_to_vectors sets the document dict key as the vector id."""
         mock_model = MagicMock()
@@ -114,7 +114,7 @@ class TestEmbedder(unittest.TestCase):
         self.assertEqual(vectors[0]["id"], "doc1")
         self.assertEqual(vectors[1]["id"], "doc2")
 
-    @patch('agentP.src.model.embedder.SentenceTransformer')
+    @patch('core.src.model.embedder.SentenceTransformer')
     def test_should_cast_embeddings_to_float32_when_embedding_documents(self, mock_sentence_transformer):
         """embed_documents_to_vectors stores float32 numpy arrays in the 'values' field."""
         mock_model = MagicMock()
@@ -134,8 +134,8 @@ class TestEmbedder(unittest.TestCase):
     # get_store()
     # ------------------------------------------------------------------
 
-    @patch('agentP.src.model.embedder.create_vector_store')
-    @patch('agentP.src.model.embedder.SentenceTransformer')
+    @patch('core.src.model.embedder.create_vector_store')
+    @patch('core.src.model.embedder.SentenceTransformer')
     def test_should_create_and_return_store_when_get_store_called_first_time(
         self, _mock_st, mock_create_vector_store
     ):
@@ -149,8 +149,8 @@ class TestEmbedder(unittest.TestCase):
         self.assertEqual(store, mock_store)
         mock_create_vector_store.assert_called_once()
 
-    @patch('agentP.src.model.embedder.create_vector_store')
-    @patch('agentP.src.model.embedder.SentenceTransformer')
+    @patch('core.src.model.embedder.create_vector_store')
+    @patch('core.src.model.embedder.SentenceTransformer')
     def test_should_not_recreate_store_when_get_store_called_multiple_times(
         self, _mock_st, mock_create_vector_store
     ):
@@ -169,8 +169,8 @@ class TestEmbedder(unittest.TestCase):
     # save_vectors_in_store()
     # ------------------------------------------------------------------
 
-    @patch('agentP.src.model.embedder.create_vector_store')
-    @patch('agentP.src.model.embedder.SentenceTransformer')
+    @patch('core.src.model.embedder.create_vector_store')
+    @patch('core.src.model.embedder.SentenceTransformer')
     def test_should_call_add_vectors_on_store_when_saving_vectors(
         self, _mock_st, mock_create_vector_store
     ):
@@ -189,7 +189,7 @@ class TestEmbedder(unittest.TestCase):
     # search()
     # ------------------------------------------------------------------
 
-    @patch('agentP.src.model.embedder.SentenceTransformer')
+    @patch('core.src.model.embedder.SentenceTransformer')
     def test_should_return_store_search_results_when_searching(self, mock_sentence_transformer):
         """search() embeds the query and returns whatever the store returns."""
         mock_model = MagicMock()
@@ -210,7 +210,7 @@ class TestEmbedder(unittest.TestCase):
     # embed_texts()
     # ------------------------------------------------------------------
 
-    @patch('agentP.src.model.embedder.SentenceTransformer')
+    @patch('core.src.model.embedder.SentenceTransformer')
     def test_should_return_float32_array_when_embedding_texts(self, mock_sentence_transformer):
         """embed_texts() returns a float32 numpy array with one row per input text."""
         mock_model = MagicMock()
@@ -229,7 +229,7 @@ class TestEmbedder(unittest.TestCase):
     # embed_query()
     # ------------------------------------------------------------------
 
-    @patch('agentP.src.model.embedder.SentenceTransformer')
+    @patch('core.src.model.embedder.SentenceTransformer')
     def test_should_return_float32_array_when_embedding_query(self, mock_sentence_transformer):
         """embed_query() wraps the single query in a list and returns a float32 array."""
         mock_model = MagicMock()

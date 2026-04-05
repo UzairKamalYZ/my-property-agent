@@ -9,9 +9,10 @@ from ..persistence.vector_store import VectorStore
 
 class Embedder:
 
-    def __init__(self) -> None:
+    def __init__(self, index_name: str = None) -> None:
         self.model = SentenceTransformer(Config.SENTENCE_TRANSFORMER_MODEL)
         self.store: Union[VectorStore, None] = None
+        self._index_name = index_name
 
     @staticmethod
     def build_metadata(doc: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
@@ -70,10 +71,13 @@ class Embedder:
 
     def get_store(self, dim: int = 384) -> VectorStore:
         if not self.store:
+            config = {}
+            if self._index_name:
+                config["index_name"] = self._index_name
             self.store = create_vector_store(
                 store_type=Config.STORE_TYPE,
                 dim=dim,
-                config={}
+                config=config,
             )
         return self.store
 

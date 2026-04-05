@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyHeader
 
 from agentP.src.agent import LocalAgent
-from agentP.src.config.config import Config
+from core.src.config.config import Config
 from clients.base import BaseClient
 
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
