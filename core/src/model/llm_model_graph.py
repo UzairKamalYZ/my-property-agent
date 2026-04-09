@@ -44,13 +44,16 @@ class LlmModelGraph:
         llm: BaseChatModel,
         system_prompt: str = None,
         rag_context_manager: RagContextManager = None,
+        tools: list | None = None,
     ):
         self.system_prompt = system_prompt or self._load_file(Config.PROMPT_FILE)
 
         self.rag_context_manager = rag_context_manager or RagContextManager(Embedder())
         self._histories: dict[str, list] = {}
 
-        self._tools = _mcp.langchain_tools()
+        # Use caller-supplied tools when provided; fall back to the full MCP registry.
+        # Pass an explicit empty list to disable all tool use for an agent.
+        self._tools = tools if tools is not None else _mcp.langchain_tools()
         self.llm = llm.bind_tools(self._tools) if self._tools else llm
 
         self.graph = self._build_graph()

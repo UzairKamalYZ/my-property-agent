@@ -1,0 +1,112 @@
+"""
+orchestrator/agent_interface.py — client-facing facade over the multi-agent graph.
+
+WHY THIS FILE EXISTS
+--------------------
+All clients (REST API, Telegram bot, cron job) were originally written against
+LocalAgent, which exposes:
+
+    agent.ask(prompt, stream=False, session_id="default") -> str | Generator
+
+OrchestratorAgent provides the exact same interface so every client can switch
+to the multi-agent pipeline by changing one import line — nothing else changes.
+
+STREAMING NOTE
+--------------
+LangGraph's stream_mode="updates" delivers complete node-output dicts, not
+individual tokens.  True token-level streaming would require stream_mode="messages"
+and an LLM that supports it end-to-end (including through Ollama).
+
+For now, _stream_tokens() yields the synthesiser's full answer split word-by-word,
+giving callers a streaming-compatible generator without requiring LLM-level support.
+When token streaming becomes available, only this method needs to change.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Generator
+
+from langsmith import traceable
+
+from .graph import MultiAgentGraph
+
+logger = logging.getLogger(__name__)
+
+
+class OrchestratorAgent:
+    """
+    Thin facade over MultiAgentGraph.
+
+    Matches the LocalAgent interface used by all clients:
+        agent.ask(prompt)                      → str
+        agent.ask(prompt, stream=True)         → Generator[str, None, None]
+        agent.ask(prompt, session_id="abc")    → str
+        agent.close()                          → None  (context-manager safe)
+
+    Construction
+    ------------
+    Instantiating OrchestratorAgent triggers MultiAgentGraph.__init__, which:
+      - loads agents from agents.json
+      - instantiates each enabled agent (LLM + vector store connections)
+      - compiles the LangGraph StateGraph
+    This happens once at startup and is reused for every subsequent ask().
+    """
+
+    def __init__(self) -> None:
+        # Build and compile the full multi-agent graph
+        self._graph = MultiAgentGraph()
+        logger.info("[OrchestratorAgent] ready")
+
+    @traceable(name="OrchestratorAgent.ask", run_type="chain", tags=["orchestrator"])
+    def ask(
+        self,
+        prompt: str,
+        stream: bool = False,
+        session_id: str = "default",
+    ) -> str | Generator[str, None, None]:
+        """
+        Ask the multi-agent pipeline a question.
+
+        Parameters
+        ----------
+        prompt     : the user's raw question
+        stream     : if True, returns a generator that yields text chunks;
+                     if False (default), blocks until the full answer is ready
+        session_id : passed through to each agent so per-session history is
+                     maintained correctly across turns
+
+        Returns
+        -------
+        str                        when stream=False
+        Generator[str, None, None] when stream=True
+        """
+        if stream:
+            # Return a generator — the caller iterates it to receive chunks
+            return self._stream_tokens(prompt, session_id)
+
+        # Blocking path — run the full graph and return the final string
+        return self._graph.ask(prompt, session_id=session_id)
+
+    def _stream_tokens(self, prompt: str, session_id: str) -> Generator[str, None, None]:
+        """
+        Yield real tokens from the synthesiser LLM as they are generated.
+
+        Delegates to MultiAgentGraph.stream_tokens() which uses LangGraph's
+        stream_mode="messages" to intercept token chunks from the synthesiser
+        node in real time.  Agent-node tokens (property, finance, conversational)
+        are filtered out inside stream_tokens() — only the final synthesis
+        reaches the caller.
+
+        The caller (REST SSE endpoint, Telegram live-edit) receives chunks
+        immediately as the LLM writes them, not after the whole pipeline finishes.
+        """
+        yield from self._graph.stream_tokens(prompt, session_id=session_id)
+
+    def close(self) -> None:
+        """No persistent resources to release — graph is stateless between calls."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()

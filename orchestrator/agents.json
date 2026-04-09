@@ -1,0 +1,25 @@
+{
+  "agents": [
+    {
+      "name": "conversational_agent",
+      "class": "agents.conversational.agent.ConversationalAgent",
+      "description": "Handles greetings, small talk, and general questions. Route here for hi, hello, how are you, or any message that is not about property search or finance. Never calls property or finance tools.",
+      "enabled": true,
+      "rag": false
+    },
+    {
+      "name": "property_agent",
+      "class": "agents.property.agent.LocalAgent",
+      "description": "Searches property listings matching the user's criteria. Must be called before finance_agent when listing prices are needed.",
+      "enabled": true,
+      "rag": true
+    },
+    {
+      "name": "finance_agent",
+      "class": "agents.finance.agent.FinanceAgent",
+      "description": "Performs mortgage estimates, affordability checks, and currency-aware financial analysis.",
+      "enabled": true,
+      "rag": false
+    }
+  ]
+}

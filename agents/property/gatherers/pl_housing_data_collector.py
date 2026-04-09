@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from agentP.src.housing.housing_data_collector import HousingDataCollector
+from agents.property.housing.housing_data_collector import HousingDataCollector
 
 if __name__ == "__main__":
     with (HousingDataCollector() as collector):

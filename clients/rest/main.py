@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyHeader
 
-from agentP.src.agent import LocalAgent
+from orchestrator.agent_interface import OrchestratorAgent
 from core.src.config.config import Config
 from clients.base import BaseClient
 
@@ -25,7 +25,7 @@ async def verify_api_key(api_key: str = Security(API_KEY_HEADER)):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    agent = LocalAgent()
+    agent = OrchestratorAgent()
     app.state.agent = agent
     print("✅ Agent started.")
     yield

@@ -7,7 +7,7 @@ import random
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-from agentP.src.agent import LocalAgent
+from orchestrator.agent_interface import OrchestratorAgent
 from core.src.config.config import Config
 from clients.base import BaseClient
 
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class _Bot:
 
     def __init__(self):
-        self.local_agent = LocalAgent()
+        self.local_agent = OrchestratorAgent()
         self.app = ApplicationBuilder().token(Config.TELEGRAM_BOT_TOKEN).build()
         self.app.add_handler(CommandHandler("start", self._handle_start))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))

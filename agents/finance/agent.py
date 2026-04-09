@@ -1,7 +1,7 @@
 from core.src.base_agent import BaseAgent
 from core.src.model.llm_model_graph import LlmModelGraph
 
-from .config.config import FinanceConfig
+from .config import FinanceConfig
 
 
 class FinanceAgent(BaseAgent):

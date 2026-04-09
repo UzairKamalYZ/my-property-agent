@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 class LocalAgent(BaseAgent):
     """Property-search agent.  Uses the default system prompt and RAG pipeline."""
 
-    def __init__(self, session_id: str = None):
-        super().__init__(session_id)
+    def __init__(self, session_id: str = None, rag_enabled: bool = False):
+        super().__init__(session_id, rag_enabled=rag_enabled)
         self.web_scraper = WebScraper()
         with open(Config.INTERACTION_FILE, "r") as f:
             self.interaction_texts = json.load(f)

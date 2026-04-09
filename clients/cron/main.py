@@ -3,7 +3,7 @@ setup_logging()
 
 import time
 
-from agentP.src.agent import LocalAgent
+from orchestrator.agent_interface import OrchestratorAgent
 from core.src.config.config import Config
 from clients.base import BaseClient
 
@@ -12,7 +12,7 @@ def _run_job() -> None:
     """Run a single scheduled search and print the result."""
     print(f"[{time.ctime()}] Starting cron job...")
     try:
-        with LocalAgent() as agent:
+        with OrchestratorAgent() as agent:
             prompt = Config.CRON_SEARCH_PROMPT
             print(f"[{time.ctime()}] Asking agent: '{prompt}'")
             response = agent.ask(prompt)

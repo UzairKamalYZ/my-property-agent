@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from agentP.src.model.embedder import Embedder
+from core.src.model.embedder import Embedder
 
 
 class HousingDataCollector:

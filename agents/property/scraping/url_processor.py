@@ -26,13 +26,13 @@ class UrlProcessor:
                 continue
 
             extracted = self.extract_listings(content, url)
-            
+
             listings.extend(extracted)
 
             print(f"Extracted {len(extracted)} listings from {url}")
 
         return listings
-    
+
     def extract_listings(self, content: str, source_url: str) -> list[dict]:
         listings = []
         # Split content into candidate blocks

@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parents[3] / ".env")
+load_dotenv(Path(__file__).parents[2] / ".env")
 
 
 class FinanceConfig:
@@ -10,7 +10,7 @@ class FinanceConfig:
 
     FINANCE_PROMPT_FILE = os.getenv(
         "FINANCE_PROMPT_FILE",
-        str(Path(__file__).parents[1] / "prompts" / "System_Prompt.txt"),
+        str(Path(__file__).parent / "prompts" / "System_Prompt.txt"),
     )
     FINANCE_PINECONE_INDEX_NAME = os.getenv(
         "FINANCE_PINECONE_INDEX_NAME",
