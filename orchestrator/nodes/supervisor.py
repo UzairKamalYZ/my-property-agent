@@ -45,9 +45,10 @@ class SupervisorNode:
                       {user_input} and {agent_outputs} placeholders
     """
 
-    def __init__(self, llm: BaseChatModel, prompt_template: str) -> None:
+    def __init__(self, llm: BaseChatModel, prompt_template: str, agent_names: set[str] = None) -> None:
         self._llm = llm
         self._prompt_template = prompt_template
+        self._agent_names = agent_names or set()
 
     # ------------------------------------------------------------------
     # LangGraph interface — called as supervisor_node(state)
@@ -90,29 +91,48 @@ class SupervisorNode:
 
         Priority:
           1. Strip markdown fences.
-          2. Full JSON parse.
+          2. Full JSON parse → extract "next" value.
           3. Regex extraction of the first {...} block.
           4. Fallback to "FINISH" (safe default — stops the loop).
+
+        After extraction, the raw value is validated against known agent names.
+        If the LLM returns something like "property_agent | FINISH", we scan the
+        value for a known agent name and return that instead of defaulting to FINISH.
         """
         cleaned = _FENCE_RE.sub(r"\1", text).strip()
 
+        raw = None
         try:
             data = json.loads(cleaned)
             if isinstance(data, dict) and "next" in data:
-                return str(data["next"])
+                raw = str(data["next"])
         except json.JSONDecodeError:
             pass
 
-        m = _JSON_RE.search(cleaned)
-        if m:
-            try:
-                data = json.loads(m.group())
-                if isinstance(data, dict) and "next" in data:
-                    return str(data["next"])
-            except json.JSONDecodeError:
-                pass
+        if raw is None:
+            m = _JSON_RE.search(cleaned)
+            if m:
+                try:
+                    data = json.loads(m.group())
+                    if isinstance(data, dict) and "next" in data:
+                        raw = str(data["next"])
+                except json.JSONDecodeError:
+                    pass
 
-        logger.warning(
-            "[supervisor] could not parse next from %r — defaulting to FINISH", text[:200]
-        )
+        if raw is None:
+            logger.warning("[supervisor] could not parse next from %r — defaulting to FINISH", text[:200])
+            return "FINISH"
+
+        # Exact match — clean output from a well-behaved LLM
+        if raw in self._agent_names or raw == "FINISH":
+            return raw
+
+        # Fuzzy match — LLM included garbage alongside the agent name
+        # e.g. "property_agent | FINISH", "call property_agent next"
+        for name in self._agent_names:
+            if name in raw:
+                logger.warning("[supervisor] fuzzy-matched %r → %r", raw, name)
+                return name
+
+        logger.warning("[supervisor] unrecognised next=%r — defaulting to FINISH", raw)
         return "FINISH"

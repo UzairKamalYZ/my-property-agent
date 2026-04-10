@@ -67,6 +67,8 @@ class LlmModelGraph:
         if session_id is None:
             session_id = str(uuid.uuid4())
 
+        logger.info("[%s] LlmModelGraph.ask() entered (session=%s)", self.agent_name, session_id)
+
         @traceable(
             name=f"agent.{self.agent_name}",
             run_type="chain",
@@ -76,7 +78,9 @@ class LlmModelGraph:
         def _run(query: str) -> str:
             history = self._get_history(session_id)
             state = self._initial_state(query, history)
+            logger.info("[%s] graph.invoke → start (session=%s)", self.agent_name, session_id)
             result = self.graph.invoke(state)
+            logger.info("[%s] graph.invoke → done", self.agent_name)
             answer = result["answer"]
             self._histories[session_id] = history + [
                 HumanMessage(content=query),
@@ -114,10 +118,13 @@ class LlmModelGraph:
     # ------------------- NODES -------------------
 
     def _retrieve_node(self, state: State) -> dict:
+        logger.info("[%s] retrieve → querying RAG context", self.agent_name)
         context = self.rag_context_manager.get_context(state["user_prompt"])
+        logger.info("[%s] retrieve → context_len=%d", self.agent_name, len(context))
         return {"context": context}
 
     def _generate_node(self, state: State) -> dict:
+        logger.info("[%s] generate → invoking LLM", self.agent_name)
         messages: list = [SystemMessage(content=self.system_prompt)]
 
         if state["context"]:

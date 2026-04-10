@@ -157,7 +157,7 @@ class MultiAgentGraph:
         #    Each class closes over its dependencies (llm, prompt, agent
         #    instance) and is callable as a plain function(state) -> dict.
         # -----------------------------------------------------------------
-        supervisor_node = SupervisorNode(llm, supervisor_prompt)
+        supervisor_node = SupervisorNode(llm, supervisor_prompt, agent_names)
         synthesiser_node = SynthesiserNode(llm, synthesiser_prompt)
         # Agent nodes are created in the loop below (one per enabled agent)
 

@@ -59,7 +59,7 @@ def load_agents(agents_file: Path = _AGENTS_FILE) -> list[AgentEntry]:
         rag_enabled = spec.get("rag", False)
         llm_provider = spec.get("llm_provider", Config.LLM_PROVIDER)
         llm_model = spec.get("llm_model", Config.LLM_MODEL_NAME)
-        instance = cls(rag_enabled=rag_enabled)
+        instance = cls(rag_enabled=rag_enabled, llm_provider=llm_provider, llm_model=llm_model)
         logger.info(
             "[agent_registry] loaded %s → %s (provider=%s model=%s)",
             spec["name"], spec["class"], llm_provider, llm_model,

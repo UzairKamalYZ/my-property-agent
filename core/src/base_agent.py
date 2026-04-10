@@ -75,6 +75,7 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
 
     def ask(self, prompt: str, stream: bool = False, session_id: str = None):
+        logger.info("[%s] BaseAgent.ask() entered", self.__class__.__name__)
         sid = session_id or self.session_id
         if stream:
             return self.model.ask_stream(prompt, session_id=sid)

@@ -27,8 +27,7 @@ class PropertySearchAgent(BaseAgent):
     def get_mcp_tools(self) -> list | None:
         return None
 
-    def __init__(self, session_id: str = None, rag_enabled: bool = False):
-        super().__init__(session_id, rag_enabled=rag_enabled)
-        # self.web_scraper = WebScraper()
-        # with open(Config.INTERACTION_FILE, "r") as f:
-        #     self.interaction_texts = json.load(f)
+    def __init__(self, session_id: str = None, rag_enabled: bool = False,
+                 llm_provider: str = None, llm_model: str = None):
+        super().__init__(session_id, rag_enabled=rag_enabled,
+                         llm_provider=llm_provider, llm_model=llm_model)
