@@ -49,6 +49,7 @@ class BaseAgent:
             system_prompt=system_prompt,
             rag_context_manager=rag_context_manager,
             tools=mcp_tools,
+            agent_name=self.__class__.__name__,
         )
         logger.debug("%s initialised (session=%s)", self.__class__.__name__, self.session_id)
 

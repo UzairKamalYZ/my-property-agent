@@ -45,7 +45,9 @@ class LlmModelGraph:
         system_prompt: str = None,
         rag_context_manager: RagContextManager = None,
         tools: list | None = None,
+        agent_name: str = "agent",
     ):
+        self.agent_name = agent_name
         self.system_prompt = system_prompt or self._load_file(Config.PROMPT_FILE)
 
         self.rag_context_manager = rag_context_manager or RagContextManager(Embedder())
@@ -60,24 +62,29 @@ class LlmModelGraph:
 
     # ------------------- PUBLIC API -------------------
 
-    @traceable(name="LlmModelGraph.ask", run_type="chain", tags=["property-agent"])
     def ask(self, user_query: str, session_id: str = None) -> str:
         if session_id is None:
             session_id = str(uuid.uuid4())
 
-        history = self._get_history(session_id)
-        state = self._initial_state(user_query, history)
+        @traceable(
+            name=f"agent.{self.agent_name}",
+            run_type="chain",
+            tags=["agent"],
+            metadata={"agent": self.agent_name, "session_id": session_id},
+        )
+        def _run(query: str) -> str:
+            history = self._get_history(session_id)
+            state = self._initial_state(query, history)
+            result = self.graph.invoke(state)
+            answer = result["answer"]
+            self._histories[session_id] = history + [
+                HumanMessage(content=query),
+                AIMessage(content=answer),
+            ]
+            return answer
 
-        result = self.graph.invoke(state)
-        answer = result["answer"]
+        return _run(user_query)
 
-        self._histories[session_id] = history + [
-            HumanMessage(content=user_query),
-            AIMessage(content=answer),
-        ]
-        return answer
-
-    @traceable(name="LlmModelGraph.ask_stream", run_type="chain", tags=["streaming"])
     def ask_stream(self, user_query: str, session_id: str = None):
         if session_id is None:
             session_id = str(uuid.uuid4())
@@ -186,8 +193,17 @@ class LlmModelGraph:
     def _invoke_tool(self, name: str, args: dict) -> str:
         for tool in self._tools:
             if tool.name == name:
+                @traceable(
+                    name=f"tool.{name}",
+                    run_type="tool",
+                    tags=["tool"],
+                    metadata={"agent": self.agent_name, "tool": name},
+                )
+                def _call(a: dict) -> str:
+                    return tool.invoke(a)
+
                 try:
-                    return tool.invoke(args)
+                    return _call(args)
                 except Exception as e:
                     logger.error("Tool '%s' failed: %s", name, str(e))
                     return f"Error executing tool {name}: {str(e)}"

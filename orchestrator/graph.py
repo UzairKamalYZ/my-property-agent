@@ -42,7 +42,6 @@ from pathlib import Path
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
-from langsmith import traceable
 
 from core.src.config.config import Config
 from core.src.model.llm_factory import create_llm
@@ -207,7 +206,6 @@ class MultiAgentGraph:
     # Public interface
     # ------------------------------------------------------------------
 
-    @traceable(name="MultiAgentGraph.stream", run_type="chain", tags=["orchestrator", "streaming"])
     def stream(self, user_input: str, session_id: str = "default"):
         """
         Run the full pipeline and yield LangGraph update-event dicts.
@@ -226,7 +224,6 @@ class MultiAgentGraph:
         }
         yield from self._graph.stream(initial_state, stream_mode="updates")
 
-    @traceable(name="MultiAgentGraph.stream_tokens", run_type="chain", tags=["orchestrator", "streaming"])
     def stream_tokens(self, user_input: str, session_id: str = "default"):
         """
         Yield text tokens from the synthesiser LLM as they are generated.
@@ -252,7 +249,7 @@ class MultiAgentGraph:
 
         # stream_mode="messages" yields (AIMessageChunk, metadata) tuples.
         # metadata["langgraph_node"] tells us which graph node produced the chunk.
-        for chunk, metadata in self._graph.stream(
+        for chunk, metadata in self._graph.invoke(
             initial_state, stream_mode="messages"
         ):
             if metadata.get("langgraph_node") == "synthesiser":
@@ -260,7 +257,6 @@ class MultiAgentGraph:
                 if chunk.content:
                     yield chunk.content
 
-    @traceable(name="MultiAgentGraph.ask", run_type="chain", tags=["orchestrator"])
     def ask(self, user_input: str, session_id: str = "default") -> str:
         """
         Blocking call — runs the full pipeline and returns the synthesiser's answer.

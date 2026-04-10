@@ -13,13 +13,10 @@ to the multi-agent pipeline by changing one import line — nothing else changes
 
 STREAMING NOTE
 --------------
-LangGraph's stream_mode="updates" delivers complete node-output dicts, not
-individual tokens.  True token-level streaming would require stream_mode="messages"
-and an LLM that supports it end-to-end (including through Ollama).
-
-For now, _stream_tokens() yields the synthesiser's full answer split word-by-word,
-giving callers a streaming-compatible generator without requiring LLM-level support.
-When token streaming becomes available, only this method needs to change.
+_stream_tokens() delegates to MultiAgentGraph.stream_tokens(), which uses
+LangGraph's stream_mode="messages" to intercept AIMessageChunk objects from
+the synthesiser node as the LLM produces them.  Agent-node tokens are filtered
+out so only the final synthesis reaches the caller.
 """
 from __future__ import annotations
 
@@ -57,7 +54,11 @@ class OrchestratorAgent:
         self._graph = MultiAgentGraph()
         logger.info("[OrchestratorAgent] ready")
 
-    @traceable(name="OrchestratorAgent.ask", run_type="chain", tags=["orchestrator"])
+    @traceable(
+        name="orchestrator.request",
+        run_type="chain",
+        tags=["orchestrator"],
+    )
     def ask(
         self,
         prompt: str,

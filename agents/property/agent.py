@@ -15,9 +15,9 @@ class LocalAgent(BaseAgent):
 
     def __init__(self, session_id: str = None, rag_enabled: bool = False):
         super().__init__(session_id, rag_enabled=rag_enabled)
-        self.web_scraper = WebScraper()
-        with open(Config.INTERACTION_FILE, "r") as f:
-            self.interaction_texts = json.load(f)
+        # self.web_scraper = WebScraper()
+        # with open(Config.INTERACTION_FILE, "r") as f:
+        #     self.interaction_texts = json.load(f)
 
 
 # ------------------- CLI -------------------

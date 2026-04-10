@@ -214,32 +214,40 @@ def make_synthesiser_node(llm: BaseChatModel, system_prompt: str):
     def synthesiser_node(state: GraphState) -> dict[str, Any]:
         agent_outputs = state.get("agent_outputs", {})
 
-        # --- 3a. Format all agent outputs into a labelled block ---
-        outputs_block = (
-            "\n\n".join(
-                f"### {name}\n{text}"
-                for name, text in agent_outputs.items()
-            )
-            or "No agent outputs were collected."
+        # --- 3a. Short-circuit: single agent output needs no synthesis ---
+        # Avoids an unnecessary LLM call and prevents smaller models from
+        # echoing the agent output verbatim before writing their synthesis.
+        if len(agent_outputs) == 1:
+            answer = next(iter(agent_outputs.values()))
+            logger.info("[synthesiser] single agent — passthrough, len=%d", len(answer))
+            updated_outputs = dict(agent_outputs)
+            updated_outputs["synthesiser"] = answer
+            return {
+                "agent_outputs": updated_outputs,
+                "messages": [AIMessage(content=answer, name="synthesiser")],
+            }
+
+        # --- 3b. Format all agent outputs into a labelled block ---
+        outputs_block = "\n\n".join(
+            f"### {name}\n{text}"
+            for name, text in agent_outputs.items()
         )
 
-        # --- 3b. Build the message list for the synthesis LLM call ---
-        #         System prompt sets the tone/format rules.
-        #         Second system message injects the raw agent outputs.
-        #         Human message provides the original user question as anchor.
+        # --- 3c. Build the message list for the synthesis LLM call ---
+        #         System prompt and agent outputs are merged into one SystemMessage
+        #         so models that only honour a single system turn behave correctly.
         messages = [
-            SystemMessage(content=system_prompt),
-            SystemMessage(content=f"AGENT OUTPUTS:\n\n{outputs_block}"),
+            SystemMessage(content=f"{system_prompt}\n\nAGENT OUTPUTS:\n\n{outputs_block}"),
             HumanMessage(content=state["user_input"]),
         ]
 
-        # --- 3c. Generate the final unified answer ---
+        # --- 3d. Generate the final unified answer ---
         response = llm.invoke(messages)
         answer = response.content if hasattr(response, "content") else str(response)
 
         logger.info("[synthesiser] final answer len=%d", len(answer))
 
-        # --- 3d. Store the answer so agent_interface.py can extract it ---
+        # --- 3e. Store the answer so agent_interface.py can extract it ---
         updated_outputs = dict(agent_outputs)
         updated_outputs["synthesiser"] = answer
 
