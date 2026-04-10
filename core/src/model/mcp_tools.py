@@ -18,6 +18,7 @@ The registry is built automatically at import time from that file.
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from ..config.config import Config
@@ -44,9 +45,29 @@ def _load_registry(config_path: Path) -> MCPRegistry:
     for entry in data.get("servers", []):
         name = entry.get("name")
         command = entry.get("command")
+        url = entry.get("url")
+
         if name and command:
-            logger.info(f"mcp-tools: adding server {name} command: {command}")
+            logger.info("mcp-tools: adding stdio server '%s'", name)
             registry.register(name, command)
+
+        elif name and url:
+            # Build query params: resolve any api_key_env reference from environment
+            params: dict[str, str] = {}
+            api_key_env = entry.get("api_key_env")
+            api_key_param = entry.get("api_key_param", "apikey")
+            if api_key_env:
+                api_key = os.getenv(api_key_env)
+                if api_key:
+                    params[api_key_param] = api_key
+                else:
+                    logger.warning(
+                        "mcp-tools: env var '%s' not set for server '%s' — requests may fail",
+                        api_key_env, name,
+                    )
+            logger.info("mcp-tools: adding HTTP server '%s' → %s", name, url)
+            registry.register_http(name, url, params=params)
+
         else:
             logger.warning("mcp-tools: skipping invalid entry %s", entry)
 

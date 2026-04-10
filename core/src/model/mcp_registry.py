@@ -24,6 +24,8 @@ import subprocess
 import threading
 from typing import Any, Optional
 
+import httpx
+
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
 
@@ -199,6 +201,99 @@ class MCPProcess:
 
 
 # ---------------------------------------------------------------------------
+# MCPHttpProcess — manages a single HTTP-based MCP server
+# ---------------------------------------------------------------------------
+
+
+class MCPHttpProcess:
+    """
+    HTTP/JSON-RPC MCP client for remote MCP servers.
+
+    Unlike MCPProcess (which spawns a subprocess), this sends JSON-RPC 2.0
+    requests over HTTP POST.  The API key is passed as a query parameter.
+
+    Parameters
+    ----------
+    name          : Human-readable label used in log messages.
+    url           : Full base URL of the MCP endpoint.
+    params        : Query parameters appended to every request (e.g. api key).
+    headers       : Extra HTTP headers (Content-Type is set automatically).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        url: str,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ):
+        self.name = name
+        self._url = url
+        self._params = params or {}
+        self._headers = {"Content-Type": "application/json", **(headers or {})}
+        self._lock = threading.Lock()
+        self._req_id = 0
+        self._initialized = False
+
+    def _rpc(self, method: str, params: dict) -> dict:
+        self._req_id += 1
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self._req_id,
+            "method": method,
+            "params": params,
+        }
+        response = httpx.post(
+            self._url,
+            json=payload,
+            headers=self._headers,
+            params=self._params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def _ensure_initialized(self) -> None:
+        if self._initialized:
+            return
+        logger.info("mcp[%s]: initialising HTTP server", self.name)
+        self._rpc("initialize", {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "property-agent", "version": "1.0"},
+        })
+        self._initialized = True
+        logger.info("mcp[%s]: HTTP server ready", self.name)
+
+    def list_tools(self) -> list[dict]:
+        with self._lock:
+            self._ensure_initialized()
+            response = self._rpc("tools/list", {})
+            return response.get("result", {}).get("tools", [])
+
+    def call_tool(self, name: str, arguments: dict) -> str:
+        with self._lock:
+            try:
+                self._ensure_initialized()
+                logger.info("mcp[%s]: calling tool '%s'", self.name, name)
+                response = self._rpc("tools/call", {"name": name, "arguments": arguments})
+                content = response.get("result", {}).get("content", [])
+                result = "\n".join(
+                    item.get("text", "")
+                    for item in content
+                    if item.get("type") == "text"
+                )
+                logger.info("mcp[%s]: tool '%s' returned %d chars", self.name, name, len(result))
+                return result
+            except Exception:
+                logger.exception("mcp[%s]: HTTP tool call failed name=%s", self.name, name)
+                return f"Tool '{name}' is currently unavailable."
+
+    def close(self) -> None:
+        pass  # No persistent connection to close
+
+
+# ---------------------------------------------------------------------------
 # MCPRegistry — manages multiple MCPProcess instances
 # ---------------------------------------------------------------------------
 
@@ -230,18 +325,21 @@ class MCPRegistry:
     # ------------------------------------------------------------------ #
 
     def register(self, name: str, command: list[str]) -> "MCPRegistry":
-        """
-        Register an MCP server.
-
-        Parameters
-        ----------
-        name    : Unique label for this server (used in logs).
-        command : Subprocess command list.
-
-        Returns self for fluent chaining.
-        """
+        """Register a stdio subprocess MCP server."""
         self._servers[name] = MCPProcess(name, command)
-        logger.info("mcp-registry: registered server '%s'", name)
+        logger.info("mcp-registry: registered stdio server '%s'", name)
+        return self
+
+    def register_http(
+        self,
+        name: str,
+        url: str,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> "MCPRegistry":
+        """Register an HTTP-based MCP server."""
+        self._servers[name] = MCPHttpProcess(name, url, params=params, headers=headers)
+        logger.info("mcp-registry: registered HTTP server '%s' → %s", name, url)
         return self
 
     # ------------------------------------------------------------------ #
