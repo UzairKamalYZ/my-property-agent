@@ -12,7 +12,7 @@
     {
       "name": "property_agent",
       "class": "agents.property.agent.PropertySearchAgent",
-      "description": "Searches property listings matching the user's criteria. Must be called before finance_agent when listing prices are needed.",
+      "description": "Searches property listings matching the user's criteria using available listing data. Must be called before finance_agent when listing prices are needed.",
       "enabled": true,
       "rag": true,
       "llm_provider": "ollama",

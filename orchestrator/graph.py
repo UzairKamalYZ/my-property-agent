@@ -95,10 +95,21 @@ def _make_router(agent_names: set[str]):
 
         # --- Normal path: honour the supervisor's routing decision ---
         next_node = state.get("next", "FINISH")
-        if next_node in agent_names:
-            return next_node   # valid agent name → route there
+        already_ran = set(state.get("agent_outputs", {}).keys())
 
-        # "FINISH" or any unrecognised token → end the agent loop
+        # Block re-routing to an agent that already produced output this turn.
+        # Prevents smaller models from looping on the same agent indefinitely.
+        if next_node in agent_names and next_node in already_ran:
+            logger.warning(
+                "[router] turns=%d — supervisor re-routed to %r which already ran; forcing synthesiser",
+                state.get("turns", 0), next_node,
+            )
+            return "synthesiser"
+
+        logger.info("[router] turns=%d → routing to %r", state.get("turns", 0), next_node)
+        if next_node in agent_names:
+            return next_node
+
         return "synthesiser"
 
     return _route

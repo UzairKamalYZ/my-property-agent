@@ -129,6 +129,12 @@ class LlmModelGraph:
 
         if state["context"]:
             messages.append(SystemMessage(content=f"Relevant property listings:\n{state['context']}"))
+        else:
+            messages.append(SystemMessage(content=(
+                "No matching listings were found in the database for this query. "
+                "You MUST inform the user that no results are available. "
+                "Do NOT invent, estimate, or describe any property not present above."
+            )))
 
         messages.extend(state["session_history"])
         messages.append(HumanMessage(content=state["user_prompt"]))
