@@ -1,28 +1,3 @@
-"""
-orchestrator/agent_registry.py — loads agent definitions from agents.json
-and returns live, instantiated agent objects ready for the graph.
-
-WHY A REGISTRY?
----------------
-Agent classes are not imported directly in graph.py.  Instead this module
-reads agents.json at runtime and uses importlib to load each class by its
-dotted path.  This means adding, removing, or swapping an agent requires
-only an edit to agents.json — no Python code changes needed.
-
-ENABLE / DISABLE
-----------------
-Set "enabled": false on any entry in agents.json to exclude it from the
-graph entirely.  The agent's class will not be imported, no node will be
-added for it, and the supervisor prompt will not mention it.
-
-agents.json schema (one entry):
-    {
-        "name":        "property_agent",             # routing token used in the graph
-        "class":       "agents.property.agent.LocalAgent",  # fully-qualified class path
-        "description": "...",                        # injected into the supervisor prompt
-        "enabled":     true                          # omit or set false to skip
-    }
-"""
 from __future__ import annotations
 
 import importlib
@@ -84,7 +59,7 @@ def load_agents(agents_file: Path = _AGENTS_FILE) -> list[AgentEntry]:
         rag_enabled = spec.get("rag", False)
         llm_provider = spec.get("llm_provider", Config.LLM_PROVIDER)
         llm_model = spec.get("llm_model", Config.LLM_MODEL_NAME)
-        instance = cls(rag_enabled=rag_enabled, llm_provider=llm_provider, llm_model=llm_model)
+        instance = cls(rag_enabled=rag_enabled)
         logger.info(
             "[agent_registry] loaded %s → %s (provider=%s model=%s)",
             spec["name"], spec["class"], llm_provider, llm_model,
