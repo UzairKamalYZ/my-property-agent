@@ -30,7 +30,7 @@ the supervisor LLM said.  This prevents runaway loops.
 
 ADDING A NEW AGENT
 ------------------
-Edit orchestrator/agents.json only — no Python changes needed here.
+Edit agents.json (project root) only — no Python changes needed here.
 Set "enabled": true and provide a "class" dotted path; graph.py will pick
 it up automatically on the next startup.
 """
@@ -38,13 +38,13 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
 from core.src.config.config import Config
 from core.src.model.llm_factory import create_llm
+from core.src.utils import load_prompt
 
 # Register LangSmith env vars so traces from the orchestrator appear in the
 # same project as the individual agent traces (set with setdefault so a value
@@ -55,16 +55,10 @@ if Config.LANGCHAIN_API_KEY:
     os.environ.setdefault("LANGCHAIN_API_KEY", Config.LANGCHAIN_API_KEY)
 
 from .agent_registry import load_agents
-from .nodes import make_agent_node, make_supervisor_node, make_synthesiser_node
+from .nodes import AgentNode, SupervisorNode, SynthesiserNode
 from .state import MAX_AGENT_TURNS, GraphState
 
 logger = logging.getLogger(__name__)
-
-_PROMPTS_DIR = Path(__file__).parent / "prompts"
-
-
-def _load_prompt(filename: str) -> str:
-    return (_PROMPTS_DIR / filename).read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -153,18 +147,18 @@ class MultiAgentGraph:
             f"- {a.name}: {a.description}" for a in agents
         )
         supervisor_prompt = (
-            _load_prompt("supervisor.txt")
+            load_prompt(Config.SUPERVISOR_PROMPT_FILE)
             .replace("{agents}", agents_block)   # fills the {agents} placeholder
         )
-        synthesiser_prompt = _load_prompt("synthesiser.txt")
+        synthesiser_prompt = load_prompt(Config.SYNTHESISER_PROMPT_FILE)
 
         # -----------------------------------------------------------------
-        # 4. Create node functions via factories
-        #    Each factory closes over its dependencies (llm, prompt, agent
-        #    instance) and returns a plain function(state) -> dict.
+        # 4. Instantiate node objects
+        #    Each class closes over its dependencies (llm, prompt, agent
+        #    instance) and is callable as a plain function(state) -> dict.
         # -----------------------------------------------------------------
-        supervisor_node = make_supervisor_node(llm, supervisor_prompt)
-        synthesiser_node = make_synthesiser_node(llm, synthesiser_prompt)
+        supervisor_node = SupervisorNode(llm, supervisor_prompt)
+        synthesiser_node = SynthesiserNode(llm, synthesiser_prompt)
         # Agent nodes are created in the loop below (one per enabled agent)
 
         # -----------------------------------------------------------------
@@ -178,7 +172,7 @@ class MultiAgentGraph:
 
         # Dynamic agent nodes — one per enabled entry in agents.json
         for agent in agents:
-            node_fn = make_agent_node(agent.name, agent.instance)
+            node_fn = AgentNode(agent.name, agent.instance)
             builder.add_node(agent.name, node_fn)
             # Every agent loops back to the supervisor after it finishes
             builder.add_edge(agent.name, "supervisor")
@@ -227,16 +221,6 @@ class MultiAgentGraph:
     def stream_tokens(self, user_input: str, session_id: str = "default"):
         """
         Yield text tokens from the synthesiser LLM as they are generated.
-
-        Uses LangGraph's stream_mode="messages" which intercepts every LLM
-        call in the graph and emits individual AIMessageChunk objects as the
-        model produces tokens.  We filter by langgraph_node == "synthesiser"
-        so agent-node tokens (property, finance, conversational) are silently
-        dropped — only the final synthesis reaches the caller.
-
-        This gives true token-level streaming: the user sees the answer
-        being written in real time rather than waiting for the full pipeline
-        to finish before receiving anything.
         """
         initial_state: GraphState = {
             "user_input": user_input,

@@ -20,12 +20,12 @@ import json
 import logging
 from pathlib import Path
 
+from ..config.config import Config
 from .mcp_registry import MCPRegistry
 
 logger = logging.getLogger(__name__)
 
-# mcp.json lives at the project root — same convention as .env
-_CONFIG_PATH = Path(__file__).parents[3] / "mcp.json"
+_CONFIG_PATH = Path(Config.MCP_FILE)
 
 
 def _load_registry(config_path: Path) -> MCPRegistry:

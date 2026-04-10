@@ -1,49 +1,53 @@
 import logging
 import uuid
+from abc import ABC, abstractmethod
 
 from .config.config import Config
-from .model.embedder import Embedder
 from .model.llm_factory import create_llm
 from .model.llm_model_graph import LlmModelGraph
-from .model.rag_context_manager import RagContextManager
 
 logger = logging.getLogger(__name__)
 
 
-class _NullRagContextManager:
+class NullRagContextManager:
     """No-op RAG context manager — returns empty string, skips all vector search."""
 
     def get_context(self, user_prompt: str, k: int = 5) -> str:
         return ""
 
 
-class BaseAgent:
+class BaseAgent(ABC):
     """
     Shared base for all domain agents.
 
     Owns LLM creation, LangGraph pipeline wiring, session identity, and the
-    ask / stream / close interface.  Subclasses customise behaviour by
-    overriding hook methods:
+    ask / stream / close interface.  Subclasses must implement all three hooks:
 
         get_system_prompt()       — return the fully-loaded prompt string
-        get_rag_context_manager() — controlled by rag_enabled; override to customise
-        get_mcp_tools()           — return [] to disable, None for all, or a filtered list
-
-    RAG is disabled by default.  Pass rag_enabled=True (or set "rag": true in
-    agents.json) to activate vector-store retrieval for an agent.
+        get_rag_context_manager() — return a RAG manager or NullRagContextManager
+        get_mcp_tools()           — return None (all), [] (none), or a filtered list
 
     Note: hooks are called inside __init__ via Python's MRO.  Do not read
     subclass instance attributes inside a hook unless they were set before
     calling super().__init__().
     """
 
-    def __init__(self, session_id: str = None, rag_enabled: bool = False):
+    def __init__(
+        self,
+        session_id: str = None,
+        rag_enabled: bool = False,
+        llm_provider: str = None,
+        llm_model: str = None,
+    ):
         self.session_id = session_id or str(uuid.uuid4())
         self._rag_enabled = rag_enabled
         system_prompt = self.get_system_prompt()
         rag_context_manager = self.get_rag_context_manager()
         mcp_tools = self.get_mcp_tools()
-        llm = create_llm(Config.LLM_PROVIDER, Config.LLM_MODEL_NAME)
+        llm = create_llm(
+            llm_provider or Config.LLM_PROVIDER,
+            llm_model or Config.LLM_MODEL_NAME,
+        )
         self.model = LlmModelGraph(
             llm,
             system_prompt=system_prompt,
@@ -57,25 +61,14 @@ class BaseAgent:
     # Hook points — override in subclasses
     # ------------------------------------------------------------------
 
-    def get_system_prompt(self) -> str:
-        return LlmModelGraph._load_file(Config.PROMPT_FILE)
+    @abstractmethod
+    def get_system_prompt(self) -> str: ...
 
-    def get_rag_context_manager(self):
-        # RAG is opt-in: only enabled when rag_enabled=True is passed at construction.
-        # Controlled via the "rag" flag in orchestrator/agents.json.
-        if self._rag_enabled:
-            return RagContextManager(Embedder())
-        return _NullRagContextManager()
+    @abstractmethod
+    def get_rag_context_manager(self): ...
 
-    def get_mcp_tools(self) -> list | None:
-        """
-        Return the MCP tools to bind to this agent's LLM.
-
-        Default: None — LlmModelGraph will load the full tool list from mcp.json.
-        Override and return [] to disable all tool use for an agent (e.g. conversational).
-        Override and return a filtered list to restrict which tools an agent may call.
-        """
-        return None
+    @abstractmethod
+    def get_mcp_tools(self) -> list | None: ...
 
     # ------------------------------------------------------------------
     # Public interface

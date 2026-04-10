@@ -31,10 +31,11 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.src.config.config import Config
+
 logger = logging.getLogger(__name__)
 
-# Default config file location — sits next to this module inside orchestrator/
-_AGENTS_FILE = Path(__file__).parent / "agents.json"
+_AGENTS_FILE = Path(Config.AGENTS_FILE)
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,8 @@ class AgentEntry:
     name: str          # routing token, e.g. "property_agent"
     description: str   # shown to the supervisor LLM so it knows when to route here
     instance: object   # live BaseAgent-compatible object (must have .ask())
+    llm_provider: str  # provider used by this agent (e.g. "ollama")
+    llm_model: str     # model name used by this agent (e.g. "llama3.2")
 
 
 def load_agents(agents_file: Path = _AGENTS_FILE) -> list[AgentEntry]:
@@ -55,7 +58,7 @@ def load_agents(agents_file: Path = _AGENTS_FILE) -> list[AgentEntry]:
     2. Skip any entry where "enabled" is false (defaults to true if omitted).
     3. For each enabled entry, split the class path into module + class name.
     4. Import the module dynamically with importlib.
-    5. Instantiate the class (no constructor arguments — uses BaseAgent defaults).
+    5. Instantiate the class with rag_enabled, llm_provider, and llm_model from the spec.
     6. Wrap in an AgentEntry and collect.
     """
     raw = json.loads(agents_file.read_text(encoding="utf-8"))
@@ -77,16 +80,23 @@ def load_agents(agents_file: Path = _AGENTS_FILE) -> list[AgentEntry]:
         module = importlib.import_module(module_path)
         cls = getattr(module, class_name)
 
-        # Step 5 — instantiate; pass rag_enabled from config (default: False)
+        # Step 5 — instantiate; pass rag_enabled and per-agent LLM config
         rag_enabled = spec.get("rag", False)
-        instance = cls(rag_enabled=rag_enabled)
-        logger.info("[agent_registry] loaded %s → %s", spec["name"], spec["class"])
+        llm_provider = spec.get("llm_provider", Config.LLM_PROVIDER)
+        llm_model = spec.get("llm_model", Config.LLM_MODEL_NAME)
+        instance = cls(rag_enabled=rag_enabled, llm_provider=llm_provider, llm_model=llm_model)
+        logger.info(
+            "[agent_registry] loaded %s → %s (provider=%s model=%s)",
+            spec["name"], spec["class"], llm_provider, llm_model,
+        )
 
         # Step 6 — collect
         entries.append(AgentEntry(
             name=spec["name"],
             description=spec["description"],
             instance=instance,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
         ))
 
     return entries

@@ -14,6 +14,7 @@ from langsmith import traceable
 from langgraph.graph import StateGraph, START, END
 
 from ..config.config import Config
+from ..utils import load_prompt
 from .embedder import Embedder
 from .mcp_tools import close_mcp, _mcp
 from .rag_context_manager import RagContextManager
@@ -48,7 +49,7 @@ class LlmModelGraph:
         agent_name: str = "agent",
     ):
         self.agent_name = agent_name
-        self.system_prompt = system_prompt or self._load_file(Config.PROMPT_FILE)
+        self.system_prompt = system_prompt or load_prompt(Config.PROMPT_FILE)
 
         self.rag_context_manager = rag_context_manager or RagContextManager(Embedder())
         self._histories: dict[str, list] = {}
@@ -223,7 +224,3 @@ class LlmModelGraph:
             "session_history": list(history) if history else [],
         }
 
-    @staticmethod
-    def _load_file(path: str) -> str:
-        with open(path, "r") as f:
-            return f.read()

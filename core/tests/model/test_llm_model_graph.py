@@ -21,7 +21,7 @@ _FAKE_SYSTEM_PROMPT = "You are a helpful property agent."
 class TestLlmModelGraph(unittest.TestCase):
 
     def setUp(self):
-        self._load_file_patcher = patch.object(LlmModelGraph, "_load_file")
+        self._load_file_patcher = patch("core.src.model.llm_model_graph.load_prompt")
         self._embedder_patcher = patch("core.src.model.llm_model_graph.Embedder")
         self._rag_patcher = patch("core.src.model.llm_model_graph.RagContextManager")
         self._mcp_patcher = patch("core.src.model.llm_model_graph._mcp")

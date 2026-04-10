@@ -7,8 +7,15 @@ _FAKE_PROMPT = "You are a test agent."
 
 
 class _MinimalAgent(BaseAgent):
-    """Concrete subclass that uses all BaseAgent defaults."""
-    pass
+    """Concrete subclass that satisfies all abstract hooks with test doubles."""
+    def get_system_prompt(self) -> str:
+        return _FAKE_PROMPT
+
+    def get_rag_context_manager(self):
+        return MagicMock()
+
+    def get_mcp_tools(self) -> list | None:
+        return None
 
 
 class _CustomPromptAgent(BaseAgent):
@@ -16,11 +23,23 @@ class _CustomPromptAgent(BaseAgent):
     def get_system_prompt(self) -> str:
         return "custom system prompt"
 
+    def get_rag_context_manager(self):
+        return MagicMock()
+
+    def get_mcp_tools(self) -> list | None:
+        return None
+
 
 class _CustomRagAgent(BaseAgent):
     """Subclass that overrides the RAG hook."""
+    def get_system_prompt(self) -> str:
+        return _FAKE_PROMPT
+
     def get_rag_context_manager(self):
         return self._custom_rag
+
+    def get_mcp_tools(self) -> list | None:
+        return None
 
 
 class TestBaseAgent(unittest.TestCase):
@@ -36,9 +55,6 @@ class TestBaseAgent(unittest.TestCase):
         self._embedder_patcher.start()
         self._rag_patcher.start()
 
-        # BaseAgent.get_system_prompt() calls _load_file on the mocked class
-        # reference (core.src.base_agent.LlmModelGraph), so configure it here
-        self.mock_graph_cls._load_file.return_value = _FAKE_PROMPT
         self.mock_llm = MagicMock()
         self.mock_create_llm.return_value = self.mock_llm
         self.mock_model = MagicMock()

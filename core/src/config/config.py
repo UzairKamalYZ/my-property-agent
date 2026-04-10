@@ -2,8 +2,10 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
+_PROJECT_ROOT = Path(__file__).parents[3]
+
 # Always load from the project root .env, regardless of where the process is launched
-load_dotenv(Path(__file__).parents[3] / ".env")
+load_dotenv(_PROJECT_ROOT / ".env")
 
 class Config:
     """Configuration class for the application."""
@@ -38,3 +40,9 @@ class Config:
     # Number of listings to retrieve per RAG search
     RAG_K = int(os.getenv("RAG_K", "5"))
     MAX_HISTORY_TURNS= os.getenv("MAX_HISTORY_TURNS", 10)
+    # Orchestrator prompt files
+    SUPERVISOR_PROMPT_FILE = os.getenv("SUPERVISOR_PROMPT_FILE", "orchestrator/prompts/supervisor.txt")
+    SYNTHESISER_PROMPT_FILE = os.getenv("SYNTHESISER_PROMPT_FILE", "orchestrator/prompts/synthesiser.txt")
+    # Registry config files — resolved to absolute paths from the project root
+    AGENTS_FILE = str(_PROJECT_ROOT / os.getenv("AGENTS_FILE", "agents.json"))
+    MCP_FILE    = str(_PROJECT_ROOT / os.getenv("MCP_FILE",    "mcp.json"))

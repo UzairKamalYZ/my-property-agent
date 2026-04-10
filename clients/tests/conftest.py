@@ -35,7 +35,7 @@ def _stub(name: str) -> MagicMock:
 # without touching the real agentP.src package that agentP/tests rely on.
 # ---------------------------------------------------------------------------
 _agent_mod = _stub("agentP.src.agent")
-_agent_mod.LocalAgent = MagicMock
+_agent_mod.PropertySearchAgent = MagicMock
 
 # core.src.config.config — clients now import Config from here
 _core_config_mod = _stub("core.src.config.config")
