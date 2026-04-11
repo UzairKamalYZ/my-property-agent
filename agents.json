@@ -21,7 +21,7 @@
     {
       "name": "finance_agent",
       "class": "agents.finance.agent.FinanceAgent",
-      "description": "Performs mortgage estimates, affordability checks, and currency-aware financial analysis.",
+      "description": "Stock analysis and investment advice only. Uses live Alpha Vantage data. Route here for questions about stocks, tickers, share prices, or investment decisions. Does NOT handle currency conversion or mortgages.",
       "enabled": true,
       "rag": false,
       "llm_provider": "ollama",

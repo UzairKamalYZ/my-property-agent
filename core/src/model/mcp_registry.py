@@ -233,16 +233,14 @@ class MCPHttpProcess:
         self._headers = {"Content-Type": "application/json", **(headers or {})}
         self._lock = threading.Lock()
         self._req_id = 0
-        self._initialized = False
+        self._tool_schemas: dict[str, set[str]] = {}  # tool_name → set of accepted param names
 
-    def _rpc(self, method: str, params: dict) -> dict:
+    def _rpc(self, method: str, params: dict | None = None) -> dict:
         self._req_id += 1
-        payload = {
-            "jsonrpc": "2.0",
-            "id": self._req_id,
-            "method": method,
-            "params": params,
-        }
+        payload: dict = {"jsonrpc": "2.0", "id": self._req_id, "method": method}
+        if params:
+            payload["params"] = params
+
         response = httpx.post(
             self._url,
             json=payload,
@@ -250,31 +248,42 @@ class MCPHttpProcess:
             params=self._params,
             timeout=30,
         )
-        response.raise_for_status()
-        return response.json()
 
-    def _ensure_initialized(self) -> None:
-        if self._initialized:
-            return
-        logger.info("mcp[%s]: initialising HTTP server", self.name)
-        self._rpc("initialize", {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "property-agent", "version": "1.0"},
-        })
-        self._initialized = True
-        logger.info("mcp[%s]: HTTP server ready", self.name)
+        if not response.is_success:
+            logger.error(
+                "mcp[%s]: HTTP %d for method=%r — body: %s",
+                self.name, response.status_code, method, response.text[:500],
+            )
+            response.raise_for_status()
+
+        return response.json()
 
     def list_tools(self) -> list[dict]:
         with self._lock:
-            self._ensure_initialized()
-            response = self._rpc("tools/list", {})
-            return response.get("result", {}).get("tools", [])
+            logger.info("mcp[%s]: listing tools", self.name)
+            response = self._rpc("tools/list")
+            tools = response.get("result", {}).get("tools", [])
+            # Cache each tool's accepted parameter names for argument filtering
+            for t in tools:
+                props = t.get("inputSchema", {}).get("properties", {})
+                self._tool_schemas[t["name"]] = set(props.keys())
+            return tools
 
     def call_tool(self, name: str, arguments: dict) -> str:
         with self._lock:
             try:
-                self._ensure_initialized()
+                # Strip arguments not declared in the tool's schema.
+                # Guards against LLM passing extra keys (e.g. legacy 'function'
+                # param from Alpha Vantage REST API) that the MCP implementation
+                # does not accept.
+                accepted = self._tool_schemas.get(name)
+                if accepted is not None:
+                    filtered = {k: v for k, v in arguments.items() if k in accepted}
+                    dropped = set(arguments) - set(filtered)
+                    if dropped:
+                        logger.warning("mcp[%s]: dropped unknown args for '%s': %s", self.name, name, dropped)
+                    arguments = filtered
+
                 logger.info("mcp[%s]: calling tool '%s'", self.name, name)
                 response = self._rpc("tools/call", {"name": name, "arguments": arguments})
                 content = response.get("result", {}).get("content", [])
@@ -364,17 +373,23 @@ class MCPRegistry:
     # LangChain integration                                                #
     # ------------------------------------------------------------------ #
 
-    def langchain_tools(self) -> list[StructuredTool]:
+    def langchain_tools(self, server_name: str | None = None) -> list[StructuredTool]:
         """
-        Auto-generate LangChain StructuredTools for every tool on every
-        registered server.
+        Auto-generate LangChain StructuredTools from registered servers.
 
-        Queries each server's ``tools/list`` endpoint to discover tool
-        names, descriptions, and input schemas.  Pydantic models are built
-        dynamically from the JSON Schema.
+        Parameters
+        ----------
+        server_name : if given, only return tools from that server;
+                      if None (default), return tools from all servers.
         """
+        servers = (
+            {server_name: self._servers[server_name]}
+            if server_name and server_name in self._servers
+            else self._servers
+        )
+
         tools: list[StructuredTool] = []
-        for server in self._servers.values():
+        for server in servers.values():
             try:
                 mcp_tools = server.list_tools()
             except Exception:

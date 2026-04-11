@@ -213,11 +213,11 @@ class LlmModelGraph:
                     tags=["tool"],
                     metadata={"agent": self.agent_name, "tool": name},
                 )
-                def _call(a: dict) -> str:
-                    return tool.invoke(a)
+                def _call(**kwargs) -> str:
+                    return tool.invoke(kwargs)
 
                 try:
-                    return _call(args)
+                    return _call(**args)
                 except Exception as e:
                     logger.error("Tool '%s' failed: %s", name, str(e))
                     return f"Error executing tool {name}: {str(e)}"
