@@ -177,7 +177,7 @@ class MCPProcess:
         with self._lock:
             try:
                 self._ensure_running()
-                logger.info("mcp[%s]: calling tool '%s'", self.name, name)
+                logger.info("mcp[%s]: calling tool '%s' args=%s", self.name, name, arguments)
                 response = self._rpc("tools/call", {"name": name, "arguments": arguments})
                 content = response.get("result", {}).get("content", [])
                 result = "\n".join(
@@ -188,7 +188,7 @@ class MCPProcess:
                 logger.info("mcp[%s]: tool '%s' returned %d chars", self.name, name, len(result))
                 return result
             except Exception:
-                logger.exception("mcp[%s]: tool call failed name=%s", self.name, name)
+                logger.exception("mcp[%s]: tool call failed name=%s args=%s", self.name, name, arguments)
                 return f"Tool '{name}' is currently unavailable."
 
     def close(self) -> None:
@@ -284,7 +284,7 @@ class MCPHttpProcess:
                         logger.warning("mcp[%s]: dropped unknown args for '%s': %s", self.name, name, dropped)
                     arguments = filtered
 
-                logger.info("mcp[%s]: calling tool '%s'", self.name, name)
+                logger.info("mcp[%s]: calling tool '%s' args=%s", self.name, name, arguments)
                 response = self._rpc("tools/call", {"name": name, "arguments": arguments})
                 content = response.get("result", {}).get("content", [])
                 result = "\n".join(
@@ -295,7 +295,7 @@ class MCPHttpProcess:
                 logger.info("mcp[%s]: tool '%s' returned %d chars", self.name, name, len(result))
                 return result
             except Exception:
-                logger.exception("mcp[%s]: HTTP tool call failed name=%s", self.name, name)
+                logger.exception("mcp[%s]: HTTP tool call failed name=%s args=%s", self.name, name, arguments)
                 return f"Tool '{name}' is currently unavailable."
 
     def close(self) -> None:

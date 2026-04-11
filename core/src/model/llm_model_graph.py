@@ -47,8 +47,10 @@ class LlmModelGraph:
         rag_context_manager: RagContextManager = None,
         tools: list | None = None,
         agent_name: str = "agent",
+        rag_enabled: bool = False,
     ):
         self.agent_name = agent_name
+        self._rag_enabled = rag_enabled
         self.system_prompt = system_prompt or load_prompt(Config.PROMPT_FILE)
 
         self.rag_context_manager = rag_context_manager or RagContextManager(Embedder())
@@ -57,6 +59,7 @@ class LlmModelGraph:
         # Use caller-supplied tools when provided; fall back to the full MCP registry.
         # Pass an explicit empty list to disable all tool use for an agent.
         self._tools = tools if tools is not None else _mcp.langchain_tools()
+        logger.info("[%s] tools loaded: %s", agent_name, [t.name for t in self._tools])
         self.llm = llm.bind_tools(self._tools) if self._tools else llm
 
         self.graph = self._build_graph()
@@ -128,8 +131,8 @@ class LlmModelGraph:
         messages: list = [SystemMessage(content=self.system_prompt)]
 
         if state["context"]:
-            messages.append(SystemMessage(content=f"Relevant property listings:\n{state['context']}"))
-        else:
+            messages.append(SystemMessage(content=f"Relevant listings:\n{state['context']}"))
+        elif self._rag_enabled:
             messages.append(SystemMessage(content=(
                 "No matching listings were found in the database for this query. "
                 "You MUST inform the user that no results are available. "
@@ -204,6 +207,27 @@ class LlmModelGraph:
             pass
         return None
 
+    @staticmethod
+    def _coerce_args(args: dict) -> dict:
+        """
+        Deserialize any string values that are JSON-encoded arrays or objects.
+
+        LLMs sometimes emit ``{"tickers": "[\"AAPL\"]"}`` instead of
+        ``{"tickers": ["AAPL"]}`` when constructing tool calls as plain text.
+        """
+        coerced = {}
+        for k, v in args.items():
+            if isinstance(v, str):
+                stripped = v.strip()
+                if stripped.startswith(("[", "{")):
+                    try:
+                        coerced[k] = json.loads(stripped)
+                        continue
+                    except json.JSONDecodeError:
+                        pass
+            coerced[k] = v
+        return coerced
+
     def _invoke_tool(self, name: str, args: dict) -> str:
         for tool in self._tools:
             if tool.name == name:
@@ -217,11 +241,16 @@ class LlmModelGraph:
                     return tool.invoke(kwargs)
 
                 try:
-                    return _call(**args)
+                    args = self._coerce_args(args)
+                    logger.info("[%s] calling tool '%s' with args=%s", self.agent_name, name, args)
+                    result = _call(**args)
+                    logger.info("[%s] tool '%s' returned %d chars", self.agent_name, name, len(result))
+                    return result
                 except Exception as e:
-                    logger.error("Tool '%s' failed: %s", name, str(e))
+                    logger.error("[%s] tool '%s' failed: %s", self.agent_name, name, e)
                     return f"Error executing tool {name}: {str(e)}"
 
+        logger.warning("[%s] tool '%s' not found", self.agent_name, name)
         return f"Tool '{name}' not found."
 
     def _get_history(self, session_id: str) -> list:

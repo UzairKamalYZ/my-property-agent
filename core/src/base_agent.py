@@ -54,6 +54,7 @@ class BaseAgent(ABC):
             rag_context_manager=rag_context_manager,
             tools=mcp_tools,
             agent_name=self.__class__.__name__,
+            rag_enabled=self._rag_enabled,
         )
         logger.debug("%s initialised (session=%s)", self.__class__.__name__, self.session_id)
 
