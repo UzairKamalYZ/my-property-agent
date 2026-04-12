@@ -7,13 +7,19 @@ Responsibilities:
    when client modules are collected (e.g. `from agentP.src.agent import
    LocalAgent`), while leaving agentP.src itself as a real package so that
    agentP/tests can still import the real model and persistence modules.
-2. Stub third-party packages that are absent from the minimal test environment:
+2. Stub orchestrator.agent_interface so that importing clients does not
+   trigger the full orchestrator → graph → llm_factory → langchain_openai
+   import chain (langchain_openai is not installed in the test environment).
+3. Stub third-party packages that are absent from the minimal test environment:
    uvicorn, fastapi, and telegram.
 """
 
 import sys
 import importlib.machinery
+from pathlib import Path
 from unittest.mock import MagicMock
+
+_PROJECT_ROOT = Path(__file__).parents[2]  # clients/tests/ → clients/ → project root
 
 
 def _stub(name: str) -> MagicMock:
@@ -27,6 +33,20 @@ def _stub(name: str) -> MagicMock:
     sys.modules[name] = mock
     return mock
 
+
+# ---------------------------------------------------------------------------
+# langchain_openai — not installed in the minimal test environment.
+# Must be stubbed before any orchestrator module is imported.
+# ---------------------------------------------------------------------------
+_stub("langchain_openai")
+
+# ---------------------------------------------------------------------------
+# orchestrator.agent_interface — clients import OrchestratorAgent from here.
+# Stubbing the module stops Python following the deep import chain:
+#   agent_interface → graph → llm_factory → langchain_openai → …
+# ---------------------------------------------------------------------------
+_orchestrator_interface = _stub("orchestrator.agent_interface")
+_orchestrator_interface.OrchestratorAgent = MagicMock
 
 # ---------------------------------------------------------------------------
 # agentP.src.agent — clients import LocalAgent from here.
@@ -50,6 +70,9 @@ _Config.LANGCHAIN_PROJECT = "my-property-agent"
 _Config.LANGCHAIN_API_KEY = ""
 _Config.AI_PROVIDER_API_KEY = "ollama"
 _Config.AI_PROVIDER_BASE_URL = "http://localhost:11434/v1"
+# MCP_FILE must point to the real mcp.json so that mcp_tools.py can load the
+# registry correctly even when core.src.config.config is stubbed.
+_Config.MCP_FILE = str(_PROJECT_ROOT / "mcp.json")
 _core_config_mod.Config = _Config
 
 # agentP.src.config.config — kept as alias so any remaining references still resolve

@@ -47,13 +47,9 @@ class TestBaseAgent(unittest.TestCase):
     def setUp(self):
         self._llm_factory_patcher = patch("core.src.base_agent.create_llm")
         self._graph_patcher = patch("core.src.base_agent.LlmModelGraph")
-        self._embedder_patcher = patch("core.src.base_agent.Embedder")
-        self._rag_patcher = patch("core.src.base_agent.RagContextManager")
 
         self.mock_create_llm = self._llm_factory_patcher.start()
         self.mock_graph_cls = self._graph_patcher.start()
-        self._embedder_patcher.start()
-        self._rag_patcher.start()
 
         self.mock_llm = MagicMock()
         self.mock_create_llm.return_value = self.mock_llm
@@ -65,8 +61,6 @@ class TestBaseAgent(unittest.TestCase):
     def tearDown(self):
         self._llm_factory_patcher.stop()
         self._graph_patcher.stop()
-        self._embedder_patcher.stop()
-        self._rag_patcher.stop()
 
     # ------------------------------------------------------------------
     # Instantiation
