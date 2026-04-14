@@ -46,3 +46,24 @@ class Config:
     # Registry config files — resolved to absolute paths from the project root
     AGENTS_FILE = str(_PROJECT_ROOT / os.getenv("AGENTS_FILE", "agents.json"))
     MCP_FILE    = str(_PROJECT_ROOT / os.getenv("MCP_FILE",    "mcp.json"))
+
+    # ---------------------------------------------------------------------------
+    # WhatsApp (Green API — https://green-api.com)
+    # Register at green-api.com, create an instance, scan the QR code with your
+    # phone, then copy INSTANCE_ID and INSTANCE_TOKEN into .env.
+    # ---------------------------------------------------------------------------
+    WHATSAPP_INSTANCE_ID    = os.getenv("WHATSAPP_INSTANCE_ID", "")
+    WHATSAPP_INSTANCE_TOKEN = os.getenv("WHATSAPP_INSTANCE_TOKEN", "")
+    # Chat ID of the group to monitor (format: 120363xxxxxxxxx@g.us).
+    # Run agents/whatsapp/green_api_client.GreenAPIClient().get_contacts() to find it.
+    WHATSAPP_GROUP_ID       = os.getenv("WHATSAPP_GROUP_ID", "")
+    # Name used in the mention-detection prompt — the LLM checks whether this
+    # name appears in a message in a way that requires a reply.
+    WHATSAPP_USER_NAME      = os.getenv("WHATSAPP_USER_NAME", "Uzair")
+    # Message sent to the group when the user is mentioned and appears to be away.
+    WHATSAPP_AWAY_MESSAGE   = os.getenv(
+        "WHATSAPP_AWAY_MESSAGE",
+        "Uzair is away from his phone right now. He'll get back to you soon!",
+    )
+    # Seconds between Green API polls when the notification queue is empty.
+    WHATSAPP_POLL_INTERVAL  = os.getenv("WHATSAPP_POLL_INTERVAL", "2")

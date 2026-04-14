@@ -1,0 +1,16 @@
+You are reviewing a WhatsApp group message to decide whether it is addressed to or requires a response from {user_name}.
+
+Message: "{message}"
+
+Answer with only YES or NO — no explanation.
+
+Answer YES if any of the following are true:
+- The message directly uses {user_name}'s name (e.g. "Uzair can you…", "@Uzair", "hey Uzair")
+- The message asks where {user_name} is or when {user_name} will be available
+- The message is clearly a question directed at {user_name}
+- The message is waiting for {user_name}'s opinion or approval
+
+Answer NO if:
+- {user_name} is not mentioned at all
+- The message is general group chat not requiring {user_name}'s involvement
+- {user_name} is mentioned only as part of a story or past reference, not as someone expected to respond
