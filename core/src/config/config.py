@@ -67,3 +67,20 @@ class Config:
     )
     # Seconds between Green API polls when the notification queue is empty.
     WHATSAPP_POLL_INTERVAL  = os.getenv("WHATSAPP_POLL_INTERVAL", "2")
+
+    # ---------------------------------------------------------------------------
+    # Mail monitor
+    # ---------------------------------------------------------------------------
+    # JSON array of IMAP account configs, e.g.:
+    # [{"email":"uzair@gmail.com","imap_host":"imap.gmail.com","imap_port":993,"password":"app-pw"},
+    #  {"email":"uzair@outlook.com","imap_host":"outlook.office365.com","password":"app-pw"}]
+    MAIL_ACCOUNTS                  = os.getenv("MAIL_ACCOUNTS", "")
+    # How often to pull new emails from each inbox (hours, default 2)
+    MAIL_CHECK_INTERVAL_HOURS      = os.getenv("MAIL_CHECK_INTERVAL_HOURS", "2")
+    # How often to send the accumulated summary (hours, default 5)
+    MAIL_SUMMARY_INTERVAL_HOURS    = os.getenv("MAIL_SUMMARY_INTERVAL_HOURS", "5")
+    # WhatsApp group chat ID where the summary is delivered (format: 120363xxx@g.us).
+    # Leave empty to write the summary to the application log only.
+    MAIL_SUMMARY_WHATSAPP_GROUP_ID = os.getenv("MAIL_SUMMARY_WHATSAPP_GROUP_ID", "")
+    # SQLite file that tracks which Message-IDs have already been summarised
+    MAIL_SEEN_DB                   = os.getenv("MAIL_SEEN_DB", "mail_seen.db")

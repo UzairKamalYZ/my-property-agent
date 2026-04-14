@@ -1,0 +1,8 @@
+Summarise the following email in one or two concise sentences. Capture the key point, request, or information. Do not add opinions or commentary.
+
+Subject: {subject}
+
+Body:
+{body}
+
+Summary:

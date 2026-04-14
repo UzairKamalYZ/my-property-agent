@@ -36,6 +36,15 @@
       "rag": true,
       "llm_provider": "ollama",
       "llm_model": "llama3.2"
+    },
+    {
+      "name": "mail_agent",
+      "class": "agents.mails.agent.MailAgent",
+      "description": "Handles questions about emails and inboxes. Route here for requests like 'do I have emails from X', 'summarise my emails', or 'help me draft a reply'. Does not handle property listings or financial topics.",
+      "enabled": true,
+      "rag": false,
+      "llm_provider": "ollama",
+      "llm_model": "llama3.2"
     }
   ]
 }
