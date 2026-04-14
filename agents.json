@@ -27,6 +27,15 @@
       "rag": false,
       "llm_provider": "ollama",
       "llm_model": "llama3.2"
+    },
+    {
+      "name": "whatsapp_agent",
+      "class": "agents.whatsapp.agent.WhatsAppAgent",
+      "description": "Handles property search questions arriving via WhatsApp. Produces short, mobile-friendly replies without markdown tables or heavy formatting. Route here when the channel is WhatsApp or when a brief, conversational property answer is needed.",
+      "enabled": true,
+      "rag": true,
+      "llm_provider": "ollama",
+      "llm_model": "llama3.2"
     }
   ]
 }
