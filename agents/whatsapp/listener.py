@@ -21,15 +21,12 @@ from pathlib import Path
 
 from core.src.config.config import Config
 from core.src.model.llm_factory import create_llm
+from core.src.utils import load_prompt
 from .green_api_client import GreenAPIClient
 
 logger = logging.getLogger(__name__)
 
 _MENTION_PROMPT_FILE = Path(__file__).parent / "prompts" / "mention_check.txt"
-
-
-def _load_mention_prompt() -> str:
-    return _MENTION_PROMPT_FILE.read_text(encoding="utf-8")
 
 
 class WhatsAppListener:
@@ -47,7 +44,7 @@ class WhatsAppListener:
         self._user_name = Config.WHATSAPP_USER_NAME
         self._away_message = Config.WHATSAPP_AWAY_MESSAGE
         self._poll_interval = poll_interval or float(Config.WHATSAPP_POLL_INTERVAL)
-        self._mention_prompt_template = _load_mention_prompt()
+        self._mention_prompt_template = load_prompt(_MENTION_PROMPT_FILE)
         self._llm = create_llm(Config.LLM_PROVIDER, Config.LLM_MODEL_NAME)
         self._running = False
 

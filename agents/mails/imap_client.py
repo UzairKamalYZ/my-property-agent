@@ -24,11 +24,22 @@ import logging
 import ssl
 from datetime import datetime, timezone
 from email.header import decode_header as _raw_decode_header
+from typing import TypedDict
 
 logger = logging.getLogger(__name__)
 
-# Limit body text sent to the LLM — avoids huge context windows for long emails
 _MAX_BODY_CHARS = 2500
+
+
+# "from" is a Python keyword so we use the functional TypedDict form.
+EmailMessage = TypedDict("EmailMessage", {
+    "message_id": str,
+    "from_addr":  str,
+    "to":         str,
+    "subject":    str,
+    "body":       str,
+    "date":       str,
+})
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +102,7 @@ class IMAPAccount:
         self._port: int = int(config.get("imap_port", 993))
         self._password: str = config["password"]
 
-    def fetch_since(self, since: datetime) -> list[dict]:
+    def fetch_since(self, since: datetime) -> list[EmailMessage]:
         """
         Return all messages received since `since` (UTC datetime).
 
@@ -108,7 +119,7 @@ class IMAPAccount:
         # when the machine is in a timezone ahead of the sender.
         date_str = since.strftime("%d-%b-%Y")
         ssl_ctx = ssl.create_default_context()
-        messages: list[dict] = []
+        messages: list[EmailMessage] = []
 
         try:
             with imaplib.IMAP4_SSL(self._host, self._port, ssl_context=ssl_ctx) as conn:
@@ -130,7 +141,7 @@ class IMAPAccount:
 
                         messages.append({
                             "message_id": message_id,
-                            "from":       _decode_header(msg.get("From", "")),
+                            "from_addr":  _decode_header(msg.get("From", "")),
                             "to":         self.email,
                             "subject":    _decode_header(msg.get("Subject", "(no subject)")),
                             "body":       _extract_body(msg)[:_MAX_BODY_CHARS],

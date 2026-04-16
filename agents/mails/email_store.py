@@ -2,8 +2,8 @@
 agents/mails/email_store.py — SQLite-backed store that tracks which email
 Message-IDs have already been summarised.
 
-This prevents the same email from appearing in multiple summaries across
-check cycles.  The DB file path is controlled by MAIL_SEEN_DB in .env.
+Uses a persistent connection for the lifetime of the process rather than
+opening a new connection on every call.
 """
 
 import logging
@@ -27,35 +27,37 @@ class EmailStore:
     """
     Persist and query the set of already-processed email Message-IDs.
 
-    Thread-safety: each call opens and closes its own connection, which is
-    safe for a single-threaded polling loop.
+    A single connection is kept open for the lifetime of the store.
+    check_same_thread=False is safe here because the monitor runs in one thread.
     """
 
     def __init__(self, db_path: str | None = None) -> None:
         self._path = Path(db_path or Config.MAIL_SEEN_DB)
-        self._init()
-
-    def _init(self) -> None:
-        with sqlite3.connect(self._path) as conn:
-            conn.execute(_CREATE_TABLE)
-            conn.commit()
+        self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
+        self._conn.execute(_CREATE_TABLE)
+        self._conn.commit()
         logger.debug("[EmailStore] initialised at %s", self._path)
 
     def is_seen(self, message_id: str) -> bool:
-        """Return True if this Message-ID was already processed."""
-        with sqlite3.connect(self._path) as conn:
-            row = conn.execute(
-                "SELECT 1 FROM seen_emails WHERE message_id = ?", (message_id,)
-            ).fetchone()
+        row = self._conn.execute(
+            "SELECT 1 FROM seen_emails WHERE message_id = ?", (message_id,)
+        ).fetchone()
         return row is not None
 
     def mark_seen(self, message_id: str) -> None:
-        """Record a Message-ID as processed. Idempotent (INSERT OR IGNORE)."""
         now = datetime.now(timezone.utc).isoformat()
-        with sqlite3.connect(self._path) as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO seen_emails (message_id, seen_at) VALUES (?, ?)",
-                (message_id, now),
-            )
-            conn.commit()
+        self._conn.execute(
+            "INSERT OR IGNORE INTO seen_emails (message_id, seen_at) VALUES (?, ?)",
+            (message_id, now),
+        )
+        self._conn.commit()
         logger.debug("[EmailStore] marked seen: %s", message_id[:60])
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def __del__(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:
+            pass
