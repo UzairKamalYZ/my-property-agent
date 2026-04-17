@@ -1,6 +1,6 @@
 # My Property Agent
 
-A conversational multi-agent AI system for property search and stock analysis. Users describe what they need in natural language and the system routes their request to the right specialist agent — property search (RAG-powered), stock analysis (live data via MCP tools), or general conversation. All clients — REST API, Streamlit UI, Telegram bot, and scheduled cron job — share a single `OrchestratorAgent` facade.
+A conversational multi-agent AI system for property search, stock analysis, email monitoring, and WhatsApp integration. Users describe what they need in natural language and the system routes their request to the right specialist agent — property search (RAG-powered), stock analysis (live data via MCP tools), email queries, WhatsApp-optimised replies, or general conversation. All clients — REST API, Streamlit UI, Telegram bot, and scheduled cron job — share a single `OrchestratorAgent` facade. Two standalone background services (WhatsApp listener and mail monitor) run independently alongside the orchestrator.
 
 ---
 
@@ -45,7 +45,15 @@ MultiAgentGraph             ← LangGraph supervisor multi-agent graph
   │       │         │
   │       │         └─► supervisor  (loop back)
   │       │
-  │       └─► finance_agent         ← live stock data via Yahoo Finance MCP
+  │       ├─► finance_agent         ← live stock data via Yahoo Finance MCP
+  │       │         │
+  │       │         └─► supervisor  (loop back)
+  │       │
+  │       ├─► whatsapp_agent        ← RAG property search, mobile-friendly replies
+  │       │         │
+  │       │         └─► supervisor  (loop back)
+  │       │
+  │       └─► mail_agent            ← email questions from conversation history
   │                 │
   │                 └─► supervisor  (loop back)
   │
@@ -53,6 +61,11 @@ MultiAgentGraph             ← LangGraph supervisor multi-agent graph
           │
           ▼
         END
+
+Standalone background services (run independently):
+
+WhatsAppListener  ← polls Green API → LLM mention check → auto-reply
+MailMonitor       ← polls IMAP inboxes → LLM summarise → periodic delivery
 ```
 
 Every user message enters at the supervisor. The supervisor LLM reads the user's intent and the agent outputs collected so far, then decides which specialist to invoke next or emits `FINISH`. Once finished, the synthesiser combines all outputs into a clean, deduplicated reply.
@@ -64,6 +77,7 @@ Every user message enters at the supervisor. The supervisor LLM reads the user's
 ```
 my-property-agent/
 ├── .env                              # Runtime configuration (project root)
+├── .env-template                     # Template — copy to .env and fill in keys
 ├── mcp.json                          # MCP server registry
 ├── agents.json                       # Agent registry (name, class, model, RAG flag)
 ├── pyproject.toml                    # Project metadata and dependencies
@@ -96,17 +110,34 @@ my-property-agent/
 │   │   └── prompts/System_Prompt.txt
 │   ├── property/
 │   │   ├── agent.py                  # PropertySearchAgent(BaseAgent) — RAG
-│   │   ├── config.py                 # PropertyConfig (prompt path, Pinecone index)
 │   │   ├── housing/                  # CSV → embedding-ready text pipeline
 │   │   ├── gatherers/                # URL + Polish housing data ingestion
 │   │   ├── scraping/                 # HTTP (BeautifulSoup) + Selenium scrapers
 │   │   └── prompts/
 │   │       ├── System_Prompt.txt
-│   │       └── reformulated_prompt.txt
-│   └── finance/
-│       ├── agent.py                  # FinanceAgent(BaseAgent) — stocks MCP only
-│       ├── config.py                 # FinanceConfig (prompt path)
-│       └── prompts/System_Prompt.txt
+│   │       ├── reformulated_prompt.txt
+│   │       └── interaction.json
+│   ├── finance/
+│   │   ├── agent.py                  # FinanceAgent(BaseAgent) — stocks MCP only
+│   │   ├── config.py                 # FinanceConfig (prompt path)
+│   │   └── prompts/System_Prompt.txt
+│   ├── whatsapp/                     # WhatsApp integration
+│   │   ├── agent.py                  # WhatsAppAgent(BaseAgent) — RAG, mobile replies
+│   │   ├── listener.py               # WhatsAppListener — polls Green API, auto-replies
+│   │   ├── green_api_client.py       # Green API HTTP client
+│   │   ├── main.py                   # Standalone entrypoint for the listener
+│   │   └── prompts/
+│   │       ├── System_Prompt.txt
+│   │       └── mention_check.txt     # LLM prompt: "is this message for {user_name}?"
+│   └── mails/                        # Email monitor
+│       ├── agent.py                  # MailAgent(BaseAgent) — email Q&A in orchestrator
+│       ├── monitor.py                # MailMonitor — polls IMAP, summarises, delivers
+│       ├── imap_client.py            # IMAPAccount — fetch messages since a timestamp
+│       ├── email_store.py            # SQLite-backed dedup store (Message-ID tracking)
+│       ├── main.py                   # Standalone entrypoint for the monitor
+│       └── prompts/
+│           ├── System_Prompt.txt
+│           └── summarise_email.txt   # LLM prompt: summarise one email
 │
 ├── orchestrator/                     # Multi-agent supervisor graph
 │   ├── agent_interface.py            # OrchestratorAgent — public facade
@@ -360,6 +391,84 @@ supervisor → FINISH → synthesiser (passthrough)
 
 ---
 
+### WhatsApp Agent
+
+**Class**: `agents.whatsapp.agent.WhatsAppAgent`
+
+**Role**: Handles property search questions arriving via WhatsApp. Produces short, mobile-friendly replies without markdown tables or heavy formatting.
+
+**Configuration**:
+- RAG: enabled (same vector store as `PropertySearchAgent`)
+- MCP tools: none (returns `[]`)
+- System prompt: brief bullet points, no markdown tables, conversational tone
+
+**Standalone listener** (`agents/whatsapp/listener.py`):
+
+`WhatsAppListener` is a separate background service that runs independently of the orchestrator. It polls the Green API for new group messages, uses an LLM to detect whether the owner is mentioned, and sends a configurable away message if they are.
+
+```
+WhatsApp group message received
+  │
+  ▼
+Green API notification queue
+  │
+  ▼
+WhatsAppListener._extract_group_text()   ← filter to target group, text-only
+  │
+  ▼
+_is_asking_for_user()                    ← LLM checks mention_check.txt prompt
+  │
+  ├─ YES → GreenAPIClient.send_message(group_id, WHATSAPP_AWAY_MESSAGE)
+  └─ NO  → skip
+  │
+  ▼
+GreenAPIClient.delete_notification()     ← always delete to prevent reprocessing
+```
+
+Run the listener standalone:
+```bash
+python -m agents.whatsapp.main
+```
+
+---
+
+### Mail Agent
+
+**Class**: `agents.mails.agent.MailAgent`
+
+**Role**: Answers conversational questions about emails within the orchestrator (e.g. "do I have emails from X?", "draft a reply to the invoice"). Works solely from conversation history — no RAG or MCP tools.
+
+**Configuration**:
+- RAG: disabled (`NullRagContextManager`)
+- MCP tools: none (returns `[]`)
+
+**Standalone monitor** (`agents/mails/monitor.py`):
+
+`MailMonitor` is a separate background service that runs independently of the orchestrator. It periodically polls configured IMAP inboxes, summarises new emails with the LLM, and delivers a formatted digest on a separate schedule.
+
+```
+Every MAIL_CHECK_INTERVAL_HOURS (default 2 h):
+  IMAPAccount.fetch_since(last_check_wall)
+    → for each new email not in EmailStore (SQLite dedup):
+        LLM summarises email → appended to pending list
+        EmailStore.mark_seen(message_id)
+
+Every MAIL_SUMMARY_INTERVAL_HOURS (default 5 h):
+  pending list → formatted digest
+    → GreenAPIClient.send_message(MAIL_SUMMARY_WHATSAPP_GROUP_ID, digest)
+       (or logged if MAIL_SUMMARY_WHATSAPP_GROUP_ID is empty)
+  pending list cleared
+```
+
+Supports multiple IMAP accounts simultaneously (JSON array in `MAIL_ACCOUNTS`). A SQLite store (`MAIL_SEEN_DB`) guarantees each email is summarised at most once, even across restarts.
+
+Run the monitor standalone:
+```bash
+python -m agents.mails.main
+```
+
+---
+
 ## Core Infrastructure
 
 ### BaseAgent (`core/src/base_agent.py`)
@@ -491,6 +600,8 @@ class BaseClient(ABC):
 | `StreamlitClient` | `clients/streamlit/main.py` | Web UI (port 8501) | Requires REST API running first |
 | `TelegramClient` | `clients/telegram/main.py` | Telegram long-polling | Per-chat session IDs |
 | `CronClient` | `clients/cron/main.py` | Scheduled loop | Fires `CRON_SEARCH_PROMPT` every 30 min |
+| `WhatsAppListener` | `agents/whatsapp/main.py` | Green API polling | Standalone — does not use OrchestratorAgent |
+| `MailMonitor` | `agents/mails/main.py` | IMAP polling | Standalone — does not use OrchestratorAgent |
 
 All four use `OrchestratorAgent` as their backend. The Telegram client runs blocking `agent.ask()` calls in a thread executor to avoid blocking the async event loop.
 
@@ -570,6 +681,42 @@ All settings live in `.env` at the **project root**. `core/src/config/config.py`
 | `TELEGRAM_BOT_TOKEN` | _(required)_ | Token from [@BotFather](https://t.me/BotFather) |
 | `API_KEY` | _(empty — auth disabled)_ | REST API key; set to enforce `X-API-Key` header |
 | `CRON_SEARCH_PROMPT` | _(2-bed Poland <1000 PLN)_ | Prompt used by the scheduled job |
+
+### WhatsApp (Green API)
+
+Register at [green-api.com](https://green-api.com), create a free instance, scan the QR code with your phone, then enable "Incoming webhooks" in the instance settings.
+
+| Variable | Default | Description |
+|---|---|---|
+| `WHATSAPP_INSTANCE_ID` | _(required)_ | Green API instance ID |
+| `WHATSAPP_INSTANCE_TOKEN` | _(required)_ | Green API instance token |
+| `WHATSAPP_GROUP_ID` | _(required)_ | Target group chat ID (format: `120363xxx@g.us`) |
+| `WHATSAPP_USER_NAME` | `Uzair` | Name the LLM checks for in mention detection |
+| `WHATSAPP_AWAY_MESSAGE` | _(built-in)_ | Auto-reply sent when the user is mentioned |
+| `WHATSAPP_POLL_INTERVAL` | `2` | Seconds between polls when the queue is empty |
+
+To find the group chat ID:
+```bash
+python -c "from agents.whatsapp.green_api_client import GreenAPIClient; [print(c['id'], c.get('name')) for c in GreenAPIClient().get_contacts() if c.get('type')=='group']"
+```
+
+### Mail Monitor
+
+| Variable | Default | Description |
+|---|---|---|
+| `MAIL_ACCOUNTS` | `[]` | JSON array of IMAP account configs (see `.env-template` for examples) |
+| `MAIL_CHECK_INTERVAL_HOURS` | `2` | How often to fetch new emails (hours) |
+| `MAIL_SUMMARY_INTERVAL_HOURS` | `5` | How often to send the accumulated summary (hours) |
+| `MAIL_SUMMARY_WHATSAPP_GROUP_ID` | _(empty — log only)_ | WhatsApp group to deliver the digest to |
+| `MAIL_SEEN_DB` | `mail_seen.db` | SQLite file tracking already-summarised Message-IDs |
+
+Example `MAIL_ACCOUNTS` value:
+```json
+[
+  {"email": "you@gmail.com", "imap_host": "imap.gmail.com", "imap_port": 993, "password": "app-password"},
+  {"email": "you@outlook.com", "imap_host": "outlook.office365.com", "password": "app-password"}
+]
+```
 
 ### Observability
 
@@ -653,6 +800,26 @@ python -m clients.telegram.main
 python -m clients.cron.main
 # Fires CRON_SEARCH_PROMPT every 30 minutes
 ```
+
+### WhatsApp listener (standalone)
+
+Polls the configured WhatsApp group for new messages. When the owner is mentioned, sends the configured away message.
+
+```bash
+python -m agents.whatsapp.main
+```
+
+Requires `WHATSAPP_INSTANCE_ID`, `WHATSAPP_INSTANCE_TOKEN`, and `WHATSAPP_GROUP_ID` to be set in `.env`.
+
+### Mail monitor (standalone)
+
+Polls IMAP inboxes, summarises new emails with the LLM, and delivers a periodic digest.
+
+```bash
+python -m agents.mails.main
+```
+
+Requires `MAIL_ACCOUNTS` to be set in `.env`. Set `MAIL_SUMMARY_WHATSAPP_GROUP_ID` to deliver the digest to a WhatsApp group; leave it empty to write to the log instead.
 
 ---
 
